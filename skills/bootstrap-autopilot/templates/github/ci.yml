@@ -1,0 +1,31 @@
+# Checks on every push and pull request. The deploy workflow ({{WORKFLOW_FILE}}, from
+# {{DEPLOY_FEATURE}}) runs the same checks again before it ships.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+{{#NODE}}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "{{NODE_VERSION}}"
+          cache: npm
+{{/NODE}}
+      - name: install
+        run: {{INSTALL_CMD}}
+{{CHECKS_YAML}}
