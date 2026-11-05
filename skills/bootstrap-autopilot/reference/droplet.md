@@ -15,11 +15,11 @@ Rules for this phase:
 ```bash
 gh api user --jq .login                                   # the owner
 gh repo view <owner>/<app> >/dev/null 2>&1 && echo EXISTS # must not exist yet
-gh repo create <owner>/<app> --public --source . --remote origin --description "<pitch>"
+gh repo create <owner>/<app> --<visibility> --source . --remote origin --description "<pitch>"   # REPO_VISIBILITY
 git remote -v
 ```
 
-No push: the autopilot pushes once, at the end. Tell Kim beforehand that `docs/` (spec, review, roadmap, decisions) becomes public then.
+No push: the autopilot pushes once, at the end. If the repo is public, tell Kim beforehand that `docs/` (spec, review, roadmap, decisions) becomes public then. If it is private, tell Kim that GitHub Actions runs (CI and deploy) count against the account's private-repo minutes; nothing else changes, because the deploy ships the image over SSH and pulls from no registry.
 
 ## 1. DNS
 

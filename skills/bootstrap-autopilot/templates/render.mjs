@@ -120,6 +120,9 @@ function derive(v) {
   d.SMOKE_CMD = v.SMOKE_CMD ?? 'npm run smoke --';
   d.APP_ID = v.APP.replace(/-/g, '_');
   d.MAX_BODY = v.MAX_BODY ?? '1m';
+  d.REPO_VISIBILITY = v.REPO_VISIBILITY ?? 'public';
+  if (!['public', 'private'].includes(d.REPO_VISIBILITY))
+    fail(`REPO_VISIBILITY must be "public" or "private", not ${JSON.stringify(d.REPO_VISIBILITY)}`);
   d.PLAYTEST_CMD = v.PLAYTEST_CMD ?? 'npm run playtest --';
   d.TEST_GLOBS = JSON.stringify(v.TEST_GLOBS ?? ['**/*.test.*', '**/*.spec.*', 'tests/**']);
   d.FORMATTER_JSON = JSON.stringify(v.FORMATTER);

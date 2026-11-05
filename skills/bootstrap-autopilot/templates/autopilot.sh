@@ -51,6 +51,7 @@ OFFLINE=${AUTOPILOT_OFFLINE:-}
 APP='{{APP}}'
 APP_TITLE='{{APP_TITLE}}'
 GH_REPO='{{GH_REPO}}'
+REPO_VISIBILITY='{{REPO_VISIBILITY}}'
 DROPLET='{{DROPLET}}'
 HEALTH_PATH='{{HEALTH_PATH}}'
 WORKFLOW='{{WORKFLOW_FILE}}'
@@ -558,7 +559,15 @@ dry_check() {
     DRY_FAILS=$((DRY_FAILS + 1))
   fi
 }
-gh_repo_ok() { gh repo view "$GH_REPO" --json name,visibility --jq '"\(.name) \(.visibility)"'; }
+gh_repo_ok() {
+  local vis
+  vis=$(gh repo view "$GH_REPO" --json visibility --jq '.visibility | ascii_downcase') || return 1
+  echo "$GH_REPO $vis"
+  [[ $vis == "$REPO_VISIBILITY" ]] || {
+    echo "visibility is $vis, bootstrap.json says $REPO_VISIBILITY"
+    return 1
+  }
+}
 gh_secrets_ok() {
   local names s
   names=$(gh secret list --repo "$GH_REPO" --json name --jq '.[].name')
@@ -602,7 +611,7 @@ dry_run_checks() {
     log warn "  - gh, deploy secrets, droplet and live URL skipped (AUTOPILOT_OFFLINE)"
   else
     dry_check "gh is logged in" gh auth status
-    dry_check "GitHub repo $GH_REPO exists" gh_repo_ok
+    dry_check "GitHub repo $GH_REPO exists and is $REPO_VISIBILITY" gh_repo_ok
     dry_check "deploy secrets set on $GH_REPO" gh_secrets_ok
     dry_check "droplet $DROPLET reachable, disk and stack dir fine" droplet_ok
     dry_check "$LIVE_URL answers over TLS (placeholder 503 or app 200)" live_ok

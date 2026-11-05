@@ -1,13 +1,13 @@
 ---
 name: bootstrap-autopilot
 description: Turn an app spec (plus optional design mocks) into a repo that an unattended autopilot can build and deploy to <app>.$BOOTSTRAP_DOMAIN. One interactive prep session: intake, design reference, four-lens spec review, Q&A, roadmap, Claude Code tooling, droplet provisioning, F01, autopilot dry run. Kim launches the autopilot; this skill never does.
-argument-hint: "<spec.md> [mock files...]"
+argument-hint: "[--private] <spec.md> [mock files...]"
 disable-model-invocation: true
 ---
 
 # Bootstrap an app for autopilot
 
-Arguments: $ARGUMENTS (first: the spec; the rest: mock files, HTML or claude.ai artifact links).
+Arguments: $ARGUMENTS (first: the spec; the rest: mock files, HTML or claude.ai artifact links). `--private` anywhere in them makes the GitHub repo private (`REPO_VISIBILITY` in bootstrap.json); without it the repo is public. Also use private, after asking Kim, when the spec says the repo must be private.
 
 You run one prep session with Kim at the keyboard. It ends with everything an unattended run needs and the exact command for Kim to launch it. **You never launch the autopilot.** Stop at every **GATE** and wait for Kim.
 
@@ -21,6 +21,7 @@ Skill files (read each when its phase starts, not before):
 
 ## Fixed policies
 
+- **Repo visibility:** public by default, private with `--private`. Both run the same pipeline.
 - **Personal apps only.** If the repo is under `~/Documents/work/`, stop at once: client engagements never use Kim's droplet, accounts or GitHub (global CLAUDE.md, "Engagements"). Never carry anything from a client engagement into a repo, a template or an example.
 - **Stack:** the spec decides. If it names none, use the default: Node 24, TypeScript, Vite + React, vitest, eslint + prettier, npm (`reference/stack-node.md`).
 - **Secrets:** build sessions never see real keys. Code reads env vars; tests and development use fakes. Real keys exist only in `/opt/<app>/.env` on the droplet and in GitHub secrets. Never echo, log, commit or read back a key's value.
@@ -76,7 +77,7 @@ Read `reference/roadmap.md`. Copy `roadmap.mjs` and `spec.mjs` into `.claude/scr
 
 Read `reference/droplet.md` and follow it step by step. Before each command, show it in a code block and say what it changes; run it after Kim's go (one go may cover a read-only batch). In order:
 
-1. Create the public GitHub repo: `gh repo create <owner>/<app> --public --source . --remote origin` (no push). Tell Kim first that `docs/` (spec, review, roadmap, decisions) will be public once the autopilot pushes.
+1. Create the GitHub repo: `gh repo create <owner>/<app> --public|--private --source . --remote origin` (no push), matching `REPO_VISIBILITY`. Public: tell Kim first that `docs/` (spec, review, roadmap, decisions) will be public once the autopilot pushes. Private: tell Kim that Actions minutes count against the private-repo allowance.
 2. DNS: Kim added the Namecheap A record beforehand; `dig +short <app>.$BOOTSTRAP_DOMAIN A` must return `$BOOTSTRAP_DROPLET_IP`. If not, stop and ask.
 3. Pick the next free `127.0.0.1` port (listeners, nginx vhosts and `/opt/*/compose.yaml` all count). Check free memory against `MEM_LIMIT`.
 4. `/opt/<app>` (root:deploy, 1775) and its `.env` (deploy, 600) with `IMAGE_TAG=` and the key names, values empty. Kim pastes the real values in **his own terminal**; you verify names as set/empty only, never values.

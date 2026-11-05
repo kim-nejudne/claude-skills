@@ -17,7 +17,7 @@ Change roadmap markers with `roadmap.mjs mark <ID> <todo|~|x|!> [note]`. Marking
 
 ## Repository
 
-- Standalone public repo `{{GH_REPO}}`. Commit messages: `feat: F07 <title>`, `fix: B03 <title>`, `docs: …`, `chore: …`.
+- Standalone {{REPO_VISIBILITY}} repo `{{GH_REPO}}`. Commit messages: `feat: F07 <title>`, `fix: B03 <title>`, `docs: …`, `chore: …`.
 - `.claude/`, `CLAUDE.md` and `.env*` are gitignored and stay local. Docs, the roadmap, `scripts/autopilot.sh` and the workflows are committed.
 
 ## Commands
