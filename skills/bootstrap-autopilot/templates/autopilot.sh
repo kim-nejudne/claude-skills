@@ -59,6 +59,16 @@ HEALTH_PATH='{{HEALTH_PATH}}'
 WORKFLOW='{{WORKFLOW_FILE}}'
 # Exists once F01 has scaffolded the project; before that there is nothing to check.
 SCAFFOLD_FILE='{{SCAFFOLD_FILE}}'
+{{#MONOREPO}}
+# Monorepo mode: the app is {{APP_DIR}}/ of {{GH_REPO}}. The run works in a git worktree of its
+# own on BRANCH, so Kim keeps working (and committing) anywhere in the repo meanwhile. Only
+# commits whose paths all match PUSH_ALLOWED are pushed: the app and a few named root files.
+APP_DIR='{{APP_DIR}}'
+BRANCH='{{BRANCH}}'
+PUSH_ALLOWED='{{PUSH_ALLOWED}}'
+INSTALL_CMD='{{INSTALL_CMD}}'
+LOCKFILE='{{LOCKFILE}}'
+{{/MONOREPO}}
 # The checks, in order: "name|command". The same list as the verify skill and CI.
 GATE=(
 {{CHECKS_BASH}}
@@ -117,6 +127,18 @@ fi
 PROJECT=$AUTOPILOT_HOME
 cd "$PROJECT"
 REPO=$(git rev-parse --show-toplevel)
+{{#MONOREPO}}
+# Kim's checkout. PROJECT and REPO move to the worktree once preflight has checked the launch.
+CHECKOUT=$PROJECT
+CHECKOUT_REPO=$REPO
+WORKTREE=$CACHE/worktree
+# Set once the deploy is live: the cleanup then removes the worktree and its branch.
+WORKTREE_REMOVE=0
+if [[ ${PROJECT#"$REPO"/} != "$APP_DIR" ]]; then
+  echo "This runner is for $APP_DIR/ of its repo, but it sits in ${PROJECT#"$REPO"/}/." >&2
+  exit 1
+fi
+{{/MONOREPO}}
 # Client engagements never use Kim's droplet, accounts or this runner.
 case $PROJECT/ in
   "$HOME"/Documents/work/*)
@@ -678,6 +700,19 @@ write_report() {
     echo "- Live check: $LIVE_STATE"
     echo "- Live URL: $LIVE_URL"
     echo
+{{#MONOREPO}}
+    echo "## Worktree"
+    echo
+    if ((WORKTREE_REMOVE)); then
+      echo "- Pushed from \`$BRANCH\`; the worktree and the branch are removed. In $CHECKOUT_REPO run \`git pull --rebase\` to get the build (prep's commits on your main are already in it)."
+    elif [[ -d $WORKTREE ]]; then
+      echo "- The work is on branch \`$BRANCH\` in $WORKTREE, not on main. The next run resumes there; nothing is lost."
+      echo "- To look at it: \`cd $WORKTREE/$APP_DIR\`. Don't change $APP_DIR/ in your own checkout until it is pushed."
+    else
+      echo "- No worktree was made (the run stopped before it)."
+    fi
+    echo
+{{/MONOREPO}}
     echo "## Kim checks"
     echo
     echo "- $(kim_checks) open under \"## Kim checks\" in docs/PROGRESS.md"
@@ -712,6 +747,11 @@ cleanup() {
     git log --oneline "$RUN_HEAD_AT_START..HEAD" 2>/dev/null || true
   } >"$RUN/summary.txt" 2>&1 || true
   ((DRY_RUN)) || write_report "$rc"
+{{#MONOREPO}}
+  if ((WORKTREE_REMOVE)); then
+    worktree_down >>"$RUN_LOG" 2>&1 || echo "Could not remove the worktree $WORKTREE or branch $BRANCH (see $RUN_LOG); remove them by hand." >&3
+  fi
+{{/MONOREPO}}
   ui_teardown
   [[ $SELF == "$CACHE"/running.*.sh ]] && rm -f -- "$SELF"
   {
@@ -751,7 +791,13 @@ kim_checks() {
   n=$(sed -n '/^## Kim checks/,/^<!-- entries below/p' docs/PROGRESS.md 2>/dev/null | grep -c '^- \[ \] ') || true
   echo "${n:-0}"
 }
+{{^MONOREPO}}
 dirty() { [[ -n $(git status --porcelain --untracked-files=all -- .) ]]; }
+{{/MONOREPO}}
+{{#MONOREPO}}
+# The whole worktree is the run's own, root files included (F01 edits the root ci.yml).
+dirty() { [[ -n $(git status --porcelain --untracked-files=all -- ':/') ]]; }
+{{/MONOREPO}}
 
 # Kill dev servers left behind by an earlier session, only if they run from this repo.
 kill_strays() {
@@ -767,7 +813,12 @@ kill_strays() {
 stash_changes() {
   local msg=$1
   if dirty; then
+{{^MONOREPO}}
     git stash push --include-untracked -m "$APP-autopilot: $msg" -- . >/dev/null
+{{/MONOREPO}}
+{{#MONOREPO}}
+    git stash push --include-untracked -m "$APP-autopilot: $msg" -- ':/' >/dev/null
+{{/MONOREPO}}
     log warn "Stashed uncommitted changes as \"$APP-autopilot: $msg\" ($(git stash list | head -1 | cut -d: -f1))"
   fi
 }
@@ -783,6 +834,98 @@ commit_docs() {
   git commit -q -m "$msg" -m "Recorded by scripts/autopilot.sh while running unattended." -- "${files[@]}"
   log info "Committed ${files[*]}: $msg"
 }
+{{#MONOREPO}}
+
+# ---------------------------------------------------------------------------------------------
+# Monorepo: the worktree
+
+# Paths in commits main has that origin/main lacks, outside PUSH_ALLOWED. The worktree starts
+# from main, so those commits would be pushed with the build: Kim pushes or moves them first.
+foreign_on_main() {
+  git -C "$CHECKOUT_REPO" rev-parse -q --verify origin/main >/dev/null || return 0
+  git -C "$CHECKOUT_REPO" log --format= --name-only origin/main..main | sed '/^$/d' | sort -u | grep -vE "$PUSH_ALLOWED" || true
+}
+launch_base_ok() {
+  local foreign
+  foreign=$(foreign_on_main)
+  [[ -z $foreign ]] && return 0
+  echo "main has unpushed commits outside $APP_DIR/ and the allowed root files; push or move them first:"
+  echo "$foreign"
+  return 1
+}
+# Uncommitted changes to the app in Kim's checkout would be invisible to the worktree.
+checkout_app_clean() {
+  local changes
+  changes=$(git -C "$CHECKOUT" status --porcelain --untracked-files=all -- .)
+  [[ -z $changes ]] && return 0
+  echo "uncommitted changes in $APP_DIR/ of your checkout (the run works from main and would not see them):"
+  echo "$changes"
+  return 1
+}
+
+# Create the worktree on BRANCH from main, or resume the one an earlier run left. Then move
+# PROJECT and REPO into it, copy the gitignored agent files over and install dependencies.
+worktree_up() {
+  local wt_branch
+  if git -C "$CHECKOUT_REPO" worktree list --porcelain | grep -qxF "worktree $WORKTREE"; then
+    wt_branch=$(git -C "$WORKTREE" rev-parse --abbrev-ref HEAD)
+    [[ $wt_branch == "$BRANCH" ]] || die "$WORKTREE is on $wt_branch, not $BRANCH; remove it (git worktree remove) and start again"
+    if ! git -C "$CHECKOUT_REPO" merge-base --is-ancestor main "$BRANCH"; then
+      [[ -z $(git -C "$WORKTREE" status --porcelain --untracked-files=all) ]] ||
+        die "main moved since the last run and $WORKTREE has uncommitted work; commit or stash it there, then start again"
+      if ! git -C "$WORKTREE" rebase -q main >>"$RUN_LOG" 2>&1; then
+        git -C "$WORKTREE" rebase --abort >/dev/null 2>&1 || true
+        die "rebasing $BRANCH onto main conflicted; resolve it in $WORKTREE, then start again"
+      fi
+      log info "Rebased $BRANCH onto main (main moved since the last run)."
+    fi
+    log info "Resuming in the worktree $WORKTREE ($BRANCH)."
+  else
+    [[ -e $WORKTREE ]] && die "$WORKTREE exists but is not a worktree of $CHECKOUT_REPO; move it away, then start again"
+    git -C "$CHECKOUT_REPO" worktree prune
+    git -C "$CHECKOUT_REPO" worktree add -q -B "$BRANCH" "$WORKTREE" main >>"$RUN_LOG" 2>&1 ||
+      die "git worktree add failed (see $RUN_LOG)"
+    rm -f "$CACHE/installed.sha256"
+    log info "Working in a new worktree $WORKTREE on $BRANCH (from main)."
+  fi
+  # .claude/ and CLAUDE.md are gitignored, so a worktree has none. Kim's copies win, except the
+  # reviewers' memory, which the worktree keeps from an earlier run.
+  mkdir -p "$WORKTREE/$APP_DIR/.claude"
+  rsync -a --exclude 'agent-memory/' "$CHECKOUT/.claude/" "$WORKTREE/$APP_DIR/.claude/"
+  if [[ -d $CHECKOUT/.claude/agent-memory && ! -d $WORKTREE/$APP_DIR/.claude/agent-memory ]]; then
+    cp -a "$CHECKOUT/.claude/agent-memory" "$WORKTREE/$APP_DIR/.claude/"
+  fi
+  if [[ -f $CHECKOUT/CLAUDE.md ]]; then cp -- "$CHECKOUT/CLAUDE.md" "$WORKTREE/$APP_DIR/CLAUDE.md"; fi
+  PROJECT=$WORKTREE/$APP_DIR
+  REPO=$WORKTREE
+  cd "$PROJECT"
+  [[ $(git rev-parse --abbrev-ref HEAD) == "$BRANCH" ]] || die "the worktree is not on $BRANCH"
+  install_deps
+}
+
+# Install dependencies in the worktree when the lockfile is new or changed since the last install.
+install_deps() {
+  local sum
+  [[ -f $LOCKFILE ]] || return 0
+  sum=$(sha256sum -- "$LOCKFILE" | cut -d' ' -f1)
+  [[ $(cat "$CACHE/installed.sha256" 2>/dev/null) == "$sum" ]] && return 0
+  log info "Installing dependencies in the worktree ($INSTALL_CMD)…"
+  bash -c "$INSTALL_CMD" >>"$RUN_LOG" 2>&1 </dev/null || die "$INSTALL_CMD failed in $PROJECT (see $RUN_LOG)"
+  echo "$sum" >"$CACHE/installed.sha256"
+}
+
+# After a live deploy: keep the reviewers' memory, then remove the worktree and its branch.
+worktree_down() {
+  if [[ -d $WORKTREE/$APP_DIR/.claude/agent-memory ]]; then
+    mkdir -p "$CHECKOUT/.claude/agent-memory"
+    rsync -a "$WORKTREE/$APP_DIR/.claude/agent-memory/" "$CHECKOUT/.claude/agent-memory/"
+  fi
+  cd "$CHECKOUT"
+  git -C "$CHECKOUT_REPO" worktree remove --force "$WORKTREE"
+  git -C "$CHECKOUT_REPO" branch -q -D "$BRANCH"
+  rm -f "$CACHE/installed.sha256"
+}
+{{/MONOREPO}}
 
 run_gate() {
   local step
@@ -830,7 +973,13 @@ push_range() {
 # changes unchanged since the run started (a session that got past the hook with a shell edit).
 # Prints the problems to $RUN/push-guard.txt and returns 1 if there are any.
 SECRET_RE='-----BEGIN ([A-Z]+ )?PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{20,}|sk-ant-[A-Za-z0-9_-]{20,}|sk-(proj-)?[A-Za-z0-9]{32,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|-----BEGIN OPENSSH PRIVATE KEY-----'
+{{^MONOREPO}}
 FORBIDDEN_PATHS_RE='(^|/)(\.env(\..*)?|.*\.pem|.*\.key|id_(rsa|ed25519|ecdsa)(\.pub)?|CLAUDE(\.local)?\.md)$|^\.claude/'
+{{/MONOREPO}}
+{{#MONOREPO}}
+# Paths are relative to the repo root, so .claude/ may sit at any depth.
+FORBIDDEN_PATHS_RE='(^|/)(\.env(\..*)?|.*\.pem|.*\.key|id_(rsa|ed25519|ecdsa)(\.pub)?|CLAUDE(\.local)?\.md)$|(^|/)\.claude/'
+{{/MONOREPO}}
 push_guard() {
   local range out="$RUN/push-guard.txt" bad paths hits
   range=$(push_range)
@@ -838,8 +987,18 @@ push_guard() {
   paths=$(git log --format= --name-only "$range" | sed '/^$/d' | sort -u)
   bad=$(grep -E "$FORBIDDEN_PATHS_RE" <<<"$paths" | grep -vE '(^|/)\.env\.example$' || true)
   [[ -n $bad ]] && printf 'Agent files or secrets in commits (%s):\n%s\n\n' "$range" "$bad" >>"$out"
+{{#MONOREPO}}
+  # Only this app and the named root files ship: never another project's work, or Kim's.
+  bad=$(grep -vE "$PUSH_ALLOWED" <<<"$paths" || true)
+  [[ -n $bad ]] && printf 'Paths outside %s/ and the allowed root files (%s):\n%s\n\n' "$APP_DIR" "$range" "$bad" >>"$out"
+{{/MONOREPO}}
   # This file holds the patterns themselves; any change to it is caught below instead.
+{{^MONOREPO}}
   hits=$(git log -p --format='commit %h' "$range" -- . ':!scripts/autopilot.sh' | grep -E '^(commit |\+)' | grep -E "^commit |$SECRET_RE" |
+{{/MONOREPO}}
+{{#MONOREPO}}
+  hits=$(git log -p --format='commit %h' "$range" -- ':/' ':!scripts/autopilot.sh' | grep -E '^(commit |\+)' | grep -E "^commit |$SECRET_RE" |
+{{/MONOREPO}}
     awk '/^commit / { c = $2; next } { print c ": " substr($0, 1, 60) "…" }' || true)
   [[ -n $hits ]] && printf 'Lines that look like secrets:\n%s\n\n' "$hits" >>"$out"
   if command -v gitleaks >/dev/null && ! gitleaks git --no-banner --redact --log-opts="$range" >>"$out" 2>&1; then
@@ -919,6 +1078,16 @@ dry_run_checks() {
   dry_check "push guard: $(push_range) carries no secrets or agent files" push_guard
   dry_check "roadmap.mjs and spec.mjs answer" bash -c 'node .claude/scripts/roadmap.mjs next >/dev/null && node .claude/scripts/spec.mjs --toc >/dev/null'
   dry_check "claude CLI runs" claude --version
+{{#MONOREPO}}
+  dry_check "main carries nothing unpushed outside $APP_DIR/ and the allowed root files" launch_base_ok
+  dry_check "no uncommitted changes in $APP_DIR/ of your checkout" checkout_app_clean
+  dry_check "rsync is installed (copies .claude/ into the worktree)" command -v rsync
+  if git worktree list --porcelain | grep -qxF "worktree $WORKTREE"; then
+    log info "  - an earlier run's worktree $WORKTREE ($BRANCH) is there; a real run resumes in it"
+  else
+    log info "  - a real run creates the worktree $WORKTREE on $BRANCH from main"
+  fi
+{{/MONOREPO}}
   if [[ -n $OFFLINE ]]; then
     log warn "  - gh, deploy secrets, droplet and live URL skipped (AUTOPILOT_OFFLINE)"
   else
@@ -928,9 +1097,16 @@ dry_run_checks() {
     dry_check "droplet $DROPLET reachable, disk and stack dir fine" droplet_ok
     dry_check "$LIVE_URL answers over TLS (placeholder 503 or app 200)" live_ok
   fi
+{{^MONOREPO}}
   if [[ -f .github/workflows/$WORKFLOW ]]; then
     dry_check "$WORKFLOW keeps the job and step names this script matches" \
       bash -c "grep -q 'name: checks' .github/workflows/$WORKFLOW && grep -q 'name: droplet' .github/workflows/$WORKFLOW && grep -q 'build and smoke-test the image' .github/workflows/$WORKFLOW"
+{{/MONOREPO}}
+{{#MONOREPO}}
+  if [[ -f $REPO/.github/workflows/$WORKFLOW ]]; then
+    dry_check "$WORKFLOW keeps the job and step names this script matches" \
+      bash -c "cd \"\$1\" && grep -q 'name: checks' \"\$2\" && grep -q 'name: droplet' \"\$2\" && grep -q 'build and smoke-test the image' \"\$2\"" _ "$REPO" ".github/workflows/$WORKFLOW"
+{{/MONOREPO}}
   else
     log info "  - $WORKFLOW not written yet ({{DEPLOY_FEATURE}} writes it from docs/deploy-kit/)"
   fi
@@ -959,6 +1135,10 @@ You are running unattended, launched by scripts/autopilot.sh. Kim is away and ca
 - Never push, deploy, run gh, ssh, scp, docker against the droplet, or sudo. Never change git remotes or git config. Never edit docs/spec.md or scripts/autopilot.sh. The script does the push and deploy.
 - Never stage .claude/, CLAUDE.md or .env* (they are gitignored; never force-add them).
 - Build exactly one feature, commit it, then stop.
+{{#MONOREPO}}
+- This app is $APP_DIR/ of a monorepo, and you work in a git worktree of it on branch $BRANCH (the current directory is the app). Touch only files inside it, except exactly these, and only when the feature names them: {{ROOT_REL}}.github/workflows/ci.yml (F01: this app's jobs), {{ROOT_REL}}.github/workflows/$WORKFLOW and {{ROOT_REL}}README.md (the deploy feature){{#HUB}}, and {{ROOT_REL}}{{HUB_DIR}}/ with {{ROOT_REL}}.github/workflows/deploy-hub.yml (the hub spoke feature){{/HUB}}. Every other project in the repo is a read-only reference: copy patterns from it, never edit or import it. The script refuses to push any commit that touches another path.
+- Stage by path (\`git add -- <paths>\`); never \`git add -A\` without \`-- .\` and the named root files. Never switch branches or touch other worktrees.
+{{/MONOREPO}}
 EOF
 )
 
@@ -969,6 +1149,10 @@ DISALLOWED=(
   'Bash(gh:*)' 'Bash(ssh:*)' 'Bash(scp:*)' 'Bash(rsync:*)' 'Bash(sftp:*)'
   'Bash(docker:*)' 'Bash(rm -rf:*)' 'Bash(sudo:*)'
   'Bash(node .claude/scripts/roadmap.mjs ungate:*)' 'AskUserQuestion'
+{{#MONOREPO}}
+  'Bash(git switch:*)' 'Bash(git worktree:*)' 'Bash(git branch -D:*)' 'Bash(git branch -d:*)'
+  'Bash(git stash drop:*)' 'Bash(git stash clear:*)'
+{{/MONOREPO}}
 )
 # Kim's user-level RTK hook rewrites some commands to `rtk <command>` before the deny list
 # sees them (a real session ran `git push --dry-run` that way), so deny those forms too.
@@ -1209,10 +1393,25 @@ if [[ -n $OFFLINE ]]; then
 else
   gh auth status >/dev/null 2>&1 || die "gh is not logged in (gh auth login)"
 fi
+{{^MONOREPO}}
 [[ $(git rev-parse --abbrev-ref HEAD) == main ]] || die "not on main"
+{{/MONOREPO}}
+{{#MONOREPO}}
+# Your checkout may be on any branch: the run starts from main, in a worktree of its own.
+command -v rsync >/dev/null || die "missing tool: rsync"
+{{/MONOREPO}}
 [[ -f .claude/skills/next-feature/SKILL.md ]] || die ".claude/skills/next-feature/SKILL.md is missing; the bootstrap writes it"
 check_remote
 git fetch -q origin 2>>"$RUN_LOG" || log warn "git fetch failed; continuing offline until the push"
+{{#MONOREPO}}
+if ((!DRY_RUN)); then
+  # Kim is still at the keyboard here, so these stop the run rather than work around it.
+  launch_base_ok >"$RUN/launch-base.txt" || die "$(head -1 "$RUN/launch-base.txt") (see $RUN/launch-base.txt)"
+  checkout_app_clean >"$RUN/checkout.txt" || die "$(head -1 "$RUN/checkout.txt") (see $RUN/checkout.txt)"
+  worktree_up
+  RUN_HEAD_AT_START=$(git rev-parse HEAD)
+fi
+{{/MONOREPO}}
 
 RM_DONE_AT_START=$(roadmap_next | sed -nE 's/^Done: ([0-9]+)\/.*/\1/p') || true
 [[ -n $RM_DONE_AT_START ]] || die "roadmap.mjs did not report progress"
@@ -1222,7 +1421,10 @@ queue_refresh
 log info "Roadmap: $RM_DONE/$RM_TOTAL done, $START_TODO to build. A feature takes ~$(fmt_dur "$FEAT_MEDIAN") (median), checks and deploy ~$(fmt_dur "$TAIL_EST")."
 
 RESUMING=0
-if dirty; then
+{{#MONOREPO}}
+# A dry run has no worktree yet; checkout_app_clean covers your checkout instead.
+{{/MONOREPO}}
+if {{#MONOREPO}}((!DRY_RUN)) && {{/MONOREPO}}dirty; then
   if roadmap_next | grep -q '^Resume:'; then
     RESUMING=1
     log warn "Uncommitted changes belong to the [~] feature; the first session resumes them."
@@ -1590,6 +1792,9 @@ for i in 1 2 3 4 5; do
     LIVE_STATE="$LIVE_URL$HEALTH_PATH answered: $(head -c 200 <<<"$health")"
     log ok "Live: $LIVE_URL$HEALTH_PATH → $health"
     notify "$APP_TITLE is live" "$LIVE_URL · $(kim_checks) Kim checks queued in docs/PROGRESS.md"
+{{#MONOREPO}}
+    WORKTREE_REMOVE=1
+{{/MONOREPO}}
     PHASE='done'
     exit 0
   fi

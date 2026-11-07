@@ -26,6 +26,25 @@ Strings are plain unless noted. Every key below is required unless marked option
 | `DOCKER_FEATURE` / `DEPLOY_FEATURE` | `"F23"` / `"F24"` | The last two roadmap IDs |
 | `BOOTSTRAP_DATE` | `"2026-11-02"` | Optional, defaults to today |
 
+## Monorepo mode
+
+Set when the app is a subdirectory of a bigger repo (phase 0 detects it: `git rev-parse --show-toplevel` is not the app dir). Absent or `false`: standalone, and every template renders exactly as before.
+
+| Key | Example | Notes |
+| --- | --- | --- |
+| `MONOREPO` | `true` | Optional |
+| `APP_DIR` | `"pinpoint"` | Required with `MONOREPO`: the app's path from the repo root |
+| `GH_REPO` / `REPO_URL` | `"kim-nejudne/portfolio"` | The parent repo (`git remote get-url origin`), not a new one |
+| `REPO_VISIBILITY` | `"public"` | The parent repo's, read with `gh repo view`; never chosen |
+| `HUB` | `{"dir": "hub"}` | Optional: set when `<root>/hub/src/spokes.ts` exists. Lets the gated hub-spoke feature touch `hub/` and `deploy-hub.yml` |
+| `PUSH_ALLOWED` | | Optional regex of root-relative paths the autopilot may push. Default: the app dir, the root `ci.yml`, `deploy-<app>.yml`, the root `README.md`, and with `HUB` the hub dir and `deploy-hub.yml` |
+| `DEPLOY_SECRETS` | `["SSH_HOST", "SSH_USER", "SSH_KEY", "SSH_KNOWN_HOSTS"]` | Optional: the shared secret names the sibling `deploy-*.yml` use (read them there) |
+| `DEPLOY_ENVIRONMENT` | `"production"` | Optional: the environment the sibling deploy jobs use |
+| `BRANCH` | `"autopilot/pinpoint"` | Optional: the worktree's branch, default `autopilot/<app>` |
+| `DEV_PORTS` | | Pick ports no sibling app's dev server uses (read their vite and server configs); Kim may run those meanwhile |
+
+In this mode `APP` is still the subdomain, container, `/opt/<app>`, cache dir and stash prefix, but not the repo name. The render writes `docs/deploy-kit/ci-jobs.yml` (F01 pastes its two jobs into the root `ci.yml`) and `.dockerignore` instead of `.github/workflows/ci.yml`, and `docs/deploy-kit/deploy.yml` gets a `paths:` filter, the app's working directory and a tag from the last commit that changed the app.
+
 ## Stack and commands
 
 | Key | Notes |

@@ -1,0 +1,53 @@
+# {{APP_TITLE}}'s jobs for the monorepo's root .github/workflows/ci.yml. F01 pastes the two jobs
+# below under that file's `jobs:` (after the other apps' jobs) and changes nothing else in it.
+# The repo has one CI workflow, so this app gets a diff gate of its own: a push that does not
+# touch {{APP_DIR}}/ skips the build job.
+
+  # Whether this push or pull request touches {{APP_DIR}}/.
+  {{APP}}-changes:
+    name: {{APP}} changed?
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the base commit, to diff against
+
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ "$EVENT" = workflow_dispatch ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            changed=true
+          elif git diff --quiet "$BASE" HEAD -- {{APP_DIR}} .github/workflows/ci.yml; then
+            changed=false
+          else
+            changed=true
+          fi
+          echo "changed=$changed"
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+
+  # {{APP_TITLE}}'s checks ({{CHECKS_NAMES}}), as the verify skill runs them.
+  {{APP}}:
+    name: build {{APP}}
+    needs: {{APP}}-changes
+    if: ${{ needs.{{APP}}-changes.outputs.changed == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: {{APP_DIR}}
+    steps:
+      - uses: actions/checkout@v4
+{{#NODE}}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "{{NODE_VERSION}}"
+          cache: npm
+          cache-dependency-path: {{APP_DIR}}/{{LOCKFILE}}
+{{/NODE}}
+      - name: install
+        run: {{INSTALL_CMD}}
+{{CHECKS_YAML}}

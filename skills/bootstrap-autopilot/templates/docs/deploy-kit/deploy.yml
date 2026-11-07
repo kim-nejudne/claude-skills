@@ -21,10 +21,22 @@ name: Deploy {{APP_TITLE}}
 on:
   push:
     branches: [main]
+{{^MONOREPO}}
     # Docs and the roadmap do not ship in the image.
     paths-ignore:
       - "**/*.md"
       - "docs/**"
+{{/MONOREPO}}
+{{#MONOREPO}}
+    # Only this app's code ships in the image; other projects in the repo, docs and the roadmap
+    # don't.
+    paths:
+      - "{{APP_DIR}}/**"
+      - "!{{APP_DIR}}/**/*.md"
+      - "!{{APP_DIR}}/docs/**"
+      - "!{{APP_DIR}}/.claude/**"
+      - ".github/workflows/{{WORKFLOW_FILE}}"
+{{/MONOREPO}}
   workflow_dispatch:
     inputs:
       tag:
@@ -49,6 +61,10 @@ concurrency:
 defaults:
   run:
     shell: bash
+{{#MONOREPO}}
+    # Every step runs in the app's own directory of the monorepo.
+    working-directory: {{APP_DIR}}
+{{/MONOREPO}}
 
 jobs:
   test:
@@ -63,6 +79,9 @@ jobs:
         with:
           node-version: "{{NODE_VERSION}}"
           cache: npm
+{{#MONOREPO}}
+          cache-dependency-path: {{APP_DIR}}/{{LOCKFILE}}
+{{/MONOREPO}}
 {{/NODE}}
       - name: install
         run: {{INSTALL_CMD}}
@@ -76,9 +95,18 @@ jobs:
     if: ${{ !cancelled() && needs.test.result != 'failure' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+{{^MONOREPO}}
     environment: production
     steps:
       - uses: actions/checkout@v4
+{{/MONOREPO}}
+{{#MONOREPO}}
+    environment: {{DEPLOY_ENVIRONMENT}}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the tag is the last commit that changed {{APP_DIR}}/
+{{/MONOREPO}}
 
       - name: resolve tag
         id: tag
@@ -89,7 +117,13 @@ jobs:
             [[ "$TAG_INPUT" =~ ^[0-9a-f]{7,12}$ ]] || { echo "tag must be a short sha, got '$TAG_INPUT'"; exit 1; }
             tag="$TAG_INPUT"; mode=repoint
           else
+{{^MONOREPO}}
             tag="${GITHUB_SHA::12}"; mode=build
+{{/MONOREPO}}
+{{#MONOREPO}}
+            # Other projects' commits don't change this app's image, so they don't name it.
+            tag=$(git log -1 --format=%H -- . ':!*.md' ':!docs' ':!.claude' | cut -c1-12); mode=build
+{{/MONOREPO}}
           fi
           echo "tag=$tag  mode=$mode"
           { echo "tag=$tag"; echo "mode=$mode"; } >> "$GITHUB_OUTPUT"
@@ -123,6 +157,9 @@ jobs:
         with:
           node-version: "{{NODE_VERSION}}"
           cache: npm
+{{#MONOREPO}}
+          cache-dependency-path: {{APP_DIR}}/{{LOCKFILE}}
+{{/MONOREPO}}
 {{/NODE}}
       - name: install
         run: {{INSTALL_CMD}}

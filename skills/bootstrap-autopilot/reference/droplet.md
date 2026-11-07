@@ -12,6 +12,17 @@ Rules for this phase:
 
 ## 0. GitHub repo
 
+**Monorepo mode:** skip this step. The repo exists and `origin` is it. Check instead (read-only):
+
+```bash
+git remote get-url origin                                  # the parent repo (GH_REPO)
+gh repo view <GH_REPO> --json visibility --jq .visibility  # REPO_VISIBILITY follows it
+```
+
+If it is public, tell Kim that `<app_dir>/docs/` (spec, review, roadmap, decisions) becomes public when the autopilot pushes.
+
+**Standalone:**
+
 ```bash
 gh api user --jq .login                                   # the owner
 gh repo view <owner>/<app> >/dev/null 2>&1 && echo EXISTS # must not exist yet
@@ -143,7 +154,17 @@ Off-box copies (DigitalOcean backups or snapshots) are Kim's call; mention them.
 
 ## 6. Deploy access and GitHub secrets
 
-A key for this repo only, so it can be revoked alone:
+**Monorepo mode:** skip the key and every `gh secret set`. The parent repo's deploy workflows share one set of deploy secrets (`DEPLOY_SECRETS`, default `SSH_HOST SSH_USER SSH_KEY SSH_KNOWN_HOSTS`, in the `DEPLOY_ENVIRONMENT` environment), and setting them again would cut off every other app's deploy. Check names only:
+
+```bash
+gh secret list --repo <GH_REPO> --json name --jq '.[].name'                  # all DEPLOY_SECRETS present
+gh api repos/<GH_REPO>/environments --jq '.environments[].name'              # DEPLOY_ENVIRONMENT present
+grep -l 'secrets.SSH_KEY' <repo>/.github/workflows/deploy-*.yml              # siblings that use them
+```
+
+The `deploy` user those secrets log in as must be able to write `/opt/<app>`: step 3's `root:deploy 1775` covers it. Then go to step 7.
+
+**Standalone:** a key for this repo only, so it can be revoked alone:
 
 ```bash
 K="$SCRATCH/<app>-deploy"

@@ -11,7 +11,12 @@ Requested feature: $ARGUMENTS (if empty, pick the next eligible one).
 
 ## 1. Orient
 - Run `node .claude/scripts/roadmap.mjs next $ARGUMENTS`. It prints roadmap status, the feature to build (full entry), and the newest 3 entries of `docs/PROGRESS.md`. Do not read `docs/ROADMAP.md` or `docs/PROGRESS.md` whole.
+{{^MONOREPO}}
 - Run `git status --short` and `git log --oneline -5`.
+{{/MONOREPO}}
+{{#MONOREPO}}
+- Run `git status --short -- .` and `git log --oneline -5 -- .`. This app is `{{APP_DIR}}/` of a monorepo: changes elsewhere in the repo are not yours; ignore them and never stage them.
+{{/MONOREPO}}
 - If there are uncommitted changes, STOP. List them and ask me whether to resume, commit, or discard. Never discard on your own.
 - If a feature is marked `[~]`, it is unfinished from an earlier session. The script picks it; resume it instead of starting another.
 
@@ -60,6 +65,9 @@ Post a plan of 15 lines or fewer: files to touch, approach, tests to write, and 
 
 ## 9. Commit
 One commit for the feature: `feat: F07 <title>` (bugs: `fix: B03 <title>`). Stage by path (`git add -- <paths>` or `git add -A` after checking `git status`); never stage `.env*`. Do not push.
+{{#MONOREPO}}
+Monorepo: stage only this app and the root files the feature names (`git add -- . {{ROOT_REL}}.github/workflows/ci.yml`); never a bare `git add -A`, which would take other projects' changes too.
+{{/MONOREPO}}
 
 ## 10. Hand off, then stop
 Reply with:

@@ -13,7 +13,7 @@ Change markers with `node .claude/scripts/roadmap.mjs mark`. A done item collaps
   - Depends: none
   - Done when:
     - <dev server command> starts the app; <each check command> exists and passes; <start command> serves the built app; `GET <health path>` returns 200 with `{ok: true}`
-    - CI workflow `.github/workflows/ci.yml` runs <the checks> on push and pull request
+    - CI workflow `.github/workflows/ci.yml` runs <the checks> on push and pull request <monorepo: "this app's two jobs from `docs/deploy-kit/ci-jobs.yml` are in the root `../.github/workflows/ci.yml`; nothing else in it changed">
     - `scripts/autopilot.sh`, `docs/` and `deploy/` from the bootstrap are committed with F01, unchanged
     - <web apps> `npm run playtest -- <scenario>` runs a Playwright scenario with one isolated browser context per role; `scripts/playtest/smoke.ts` opens the app and asserts no console errors
     - <design> the DESIGN.md tokens and fonts are wired in (CSS variables or the framework's theme) and the placeholder page uses them
@@ -47,7 +47,18 @@ Change markers with `node .claude/scripts/roadmap.mjs mark`. A done item collaps
     - The workflow runs the checks, builds and smoke-tests the image on the runner, ships it with `docker save | ssh docker load` as the `deploy` user, re-points `IMAGE_TAG`, waits for health, rolls back on failure, then runs the smoke script against `https://<domain>`
     - `README.md` has the runbook: deploy, rollback (`workflow_dispatch` with a tag), port, env vars (names only), break-glass manual steps
     - `docs/deploy-kit/` is deleted (its files now live in place)
+    - <monorepo: "the workflow lives at the repo root (`../.github/workflows/deploy-<app>.yml`), and the root `../README.md` lists the app like its siblings">
     - Kim check: open https://<domain> on <real devices> and walk <the core flow>
+
+<monorepo with HUB only:>
+- [ ] F<n+1> Hub spoke
+  - Spec: <overview section>
+  - Depends: F<n>
+  - Done when:
+    - `CASE-STUDY.md` in the app dir, in the shape of the siblings' case studies
+    - The app's entry in `../hub/src/spokes.ts`, its crop, the `../.github/workflows/deploy-hub.yml` paths line, and anything else `../hub/README.md` lists for a new spoke; the hub's own checks pass
+    - Kim check: the crop and the case study read well on the live hub
+  - Gate: Kim approves adding <app> to the public hub
 
 ## Bugs
 

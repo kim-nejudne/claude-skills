@@ -28,6 +28,16 @@ Sketchy (74 features, built unattended from 2026-10-30, live at sketchy.$BOOTSTR
 - **Kim's RTK hook rewrites commands** (`git push` becomes `rtk git push`) before the deny list sees them; a real session ran `git push --dry-run` that way. The deny list carries the `rtk` forms of every rule, and the session environment also kills the push URL, the `gh` token and the SSH agent, so a slip still fails.
 - Sessions never get SSH or deploy rights. Kim rejected that outright. The droplet's root steps happen in prep with Kim watching; the autopilot deploys only through the GitHub workflow as the unprivileged `deploy` user.
 
+## Monorepo apps run in a worktree
+
+- Sketchy ran in Kim's own portfolio checkout. Its sessions' `git status` saw Kim's other work, `git add -A` could stage it, stashes and `rebase --autostash` moved it, and any commit Kim made elsewhere on `main` stopped the push until it was resolved (its hand-made `PUSH_ALLOWED` guard). Buzzr's runner had no such guard at all.
+  → Monorepo mode builds in a git worktree on `autopilot/<app>`, so a one-to-two-day run never touches Kim's checkout. The launch refuses while `main` has unpushed commits outside `PUSH_ALLOWED` (they would ride along), and the push guard checks every path in the range against it.
+- The portfolio's deploy workflows share one set of repo secrets. The standalone recipe's `gh secret set` would have replaced them and cut off every other app's deploy.
+  → Monorepo mode never sets secrets; it checks their names.
+- One repo-wide CI workflow and path-filtered deploy workflows: a deploy workflow without a `paths:` filter redeploys the app on every sibling's push, and `docs/**` in `paths-ignore` is root-anchored. The image tag is the last commit that changed the app, not `GITHUB_SHA`.
+- `.claude/` and `CLAUDE.md` are gitignored, so a fresh worktree has none: the runner copies them in, and copies the reviewers' memory back after a live deploy.
+- A later push that touches only the hub or root files triggers no app deploy run, so the runner dispatches one (harmless: same tag).
+
 ## Droplet prep is more than an A record
 
 - Sketchy's bootstrap needed: DNS checked, a free loopback port (PokéTrack 3004, Buzzr 3005, Sketchy 3006, then the hub and ts-dojo), `/opt/<app>` as root:deploy with the sticky bit, `.env` owned by `deploy` (600), an HTTP-only bootstrap vhost so certbot could answer the challenge (the TLS vhost fails `nginx -t` until the cert exists), certbot by webroot, then the real vhost, `nginx -t` gating every reload, and a memory budget (the droplet had ~700 MB free; Buzzr is capped at 384m, Sketchy at 256m after measuring a 10-player game's peak).

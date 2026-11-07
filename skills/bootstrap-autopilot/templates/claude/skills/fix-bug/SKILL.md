@@ -11,7 +11,12 @@ Bug report: $ARGUMENTS
 
 ## 1. Orient
 - Run `node .claude/scripts/roadmap.mjs next`. It prints roadmap status, open bugs and the newest 3 PROGRESS entries. Do not read `docs/ROADMAP.md` or `docs/PROGRESS.md` whole.
+{{^MONOREPO}}
 - Run `git status --short` and `git log --oneline -5`.
+{{/MONOREPO}}
+{{#MONOREPO}}
+- Run `git status --short -- .` and `git log --oneline -5 -- .`. This app is `{{APP_DIR}}/` of a monorepo: changes elsewhere in the repo are not yours; ignore them and never stage them.
+{{/MONOREPO}}
 - If there are uncommitted changes, STOP. List them and ask me whether to resume, commit, or discard. Never discard on your own.
 
 ## 2. Log
@@ -34,4 +39,7 @@ Bug report: $ARGUMENTS
 - Add a PROGRESS.md entry under the `<!-- entries below, newest first -->` marker (`## B0N — Title (YYYY-MM-DD)`, same template). Find it with `grep -n`.
 - Run `node .claude/scripts/roadmap.mjs mark B0N x` (collapses the entry).
 - Commit: `fix: B0N <title>`. Do not push.
+{{#MONOREPO}}
+- Stage by path, inside `{{APP_DIR}}/` (`git add -- .`); never a bare `git add -A`.
+{{/MONOREPO}}
 - Hand off as `next-feature` does: what was fixed, how to try it, decisions, then **Run `/clear`, then `/next-feature`.** Stop.

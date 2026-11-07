@@ -16,7 +16,7 @@ try {
 
   let status = '';
   try {
-    status = execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], {
+    status = execFileSync('git', ['status', '--porcelain', '--untracked-files=all'{{#MONOREPO}}, '--', '.'{{/MONOREPO}}], {
       cwd: root,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],

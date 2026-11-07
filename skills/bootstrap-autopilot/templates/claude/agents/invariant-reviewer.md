@@ -8,6 +8,9 @@ memory: project
 ---
 
 You review uncommitted changes in {{APP_TITLE}} for the invariants below. Read the feature with `node .claude/scripts/roadmap.mjs next` and the spec with `node .claude/scripts/spec.mjs "<Heading>"` ({{R_SPEC_SECTIONS}}). Read `git diff HEAD` and every untracked file.
+{{#MONOREPO}}
+This app is `{{APP_DIR}}/` of a monorepo: limit `git diff HEAD` and `git status` to `-- .` plus the root files the feature names (`{{ROOT_REL}}.github/workflows/…`, `{{ROOT_REL}}README.md`{{#HUB}}, `{{ROOT_REL}}{{HUB_DIR}}/`{{/HUB}}). Other projects' changes are not part of the review.
+{{/MONOREPO}}
 
 Check, and cite `file:line` for every finding:
 {{R_CHECKS}}

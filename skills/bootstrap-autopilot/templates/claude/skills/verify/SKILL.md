@@ -5,7 +5,12 @@ description: Run the full check suite ({{CHECKS_NAMES}}) and report results. Use
 
 # Verify
 
+{{^MONOREPO}}
 Run from the repository root. If the scaffold does not exist yet (before F01 lands), say "verify: checks not set up yet (F01 creates them)" and stop.
+{{/MONOREPO}}
+{{#MONOREPO}}
+Run from the app directory (`{{APP_DIR}}/`), never from the monorepo's root. If the scaffold does not exist yet (before F01 lands), say "verify: checks not set up yet (F01 creates them)" and stop.
+{{/MONOREPO}}
 
 Run these stages in order:
 

@@ -34,6 +34,7 @@
 - **Security and limits** land with the feature that opens the surface (validation and rate limits ship with the endpoint, not in a later "hardening" milestone).
 - **Gates late**: put gated items where as little as possible depends on them. Everything that depends on a gated item waits too; the autopilot ships the rest.
 - **Backlog**: nice-to-haves from the review go under `## Backlog`, not into features.
+- **Monorepo mode**: F01 pastes `docs/deploy-kit/ci-jobs.yml`'s two jobs into the root `.github/workflows/ci.yml` (nothing else there changes) instead of writing a CI workflow; it cites the root path relative to the app (`../.github/workflows/ci.yml`). The deploy feature writes `<root>/.github/workflows/deploy-<app>.yml` and adds the app to the root `README.md` in the same shape as its siblings. With `HUB` set, one more feature follows the deploy feature: **Hub spoke**, with a `Gate:` line (Kim approves putting the app on the public hub). It writes `<app>/CASE-STUDY.md`, the app's entry in `hub/src/spokes.ts`, its crop (`hub/crops/<app>`), the `deploy-hub.yml` paths line and anything else the hub's README lists for a new spoke, with a Kim check for the crop and the copy. GitHub profile and bio text stay Kim's.
 
 ## Check before committing
 
@@ -41,4 +42,4 @@ Copy the two scripts first (they have no placeholders; phase 5's render skips th
 
 - `node .claude/scripts/roadmap.mjs next` → `Done: 0/N`, `Next eligible: F01`.
 - `node .claude/scripts/spec.mjs <ID>` for F01, the deploy feature and two in between: no `<!-- not found -->` line.
-- The deploy feature is last, and nothing but Backlog follows it.
+- The deploy feature is last, and nothing but Backlog follows it (monorepo with `HUB`: only the gated Hub spoke follows it).

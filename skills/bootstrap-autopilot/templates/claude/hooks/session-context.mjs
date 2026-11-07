@@ -73,9 +73,9 @@ try {
   if (branch === null) {
     out.push('Git: not a repository');
   } else {
-    const status = git(['status', '--porcelain', '--untracked-files=all'], root) ?? '';
+    const status = git(['status', '--porcelain', '--untracked-files=all'{{#MONOREPO}}, '--', '.'{{/MONOREPO}}], root) ?? '';
     const changed = status ? status.split(/\r?\n/).filter(Boolean).length : 0;
-    const last = git(['log', '-1', '--format=%h %s'], root) || 'no commits yet';
+    const last = git(['log', '-1', '--format=%h %s'{{#MONOREPO}}, '--', '.'{{/MONOREPO}}], root) || 'no commits yet';
     out.push(`Git: branch ${branch}, ${changed} uncommitted file(s), last commit: ${last}`);
   }
 

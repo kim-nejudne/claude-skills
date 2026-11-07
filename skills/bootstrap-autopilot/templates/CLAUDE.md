@@ -17,8 +17,16 @@ Change roadmap markers with `roadmap.mjs mark <ID> <todo|~|x|!> [note]`. Marking
 
 ## Repository
 
+{{^MONOREPO}}
 - Standalone {{REPO_VISIBILITY}} repo `{{GH_REPO}}`. Commit messages: `feat: F07 <title>`, `fix: B03 <title>`, `docs: …`, `chore: …`.
 - `.claude/`, `CLAUDE.md` and `.env*` are gitignored and stay local. Docs, the roadmap, `scripts/autopilot.sh` and the workflows are committed.
+{{/MONOREPO}}
+{{#MONOREPO}}
+- This app is `{{APP_DIR}}/` of the {{REPO_VISIBILITY}} monorepo `{{GH_REPO}}`. Work, run commands and stage files from this directory. Commit messages: `feat: F07 <title>`, `fix: B03 <title>`, `docs: …`, `chore: …`.
+- Other projects in the repo are read-only references: copy patterns, never import across projects or edit them. The only root files this app touches are `{{ROOT_REL}}.github/workflows/ci.yml` (its jobs), `{{ROOT_REL}}.github/workflows/{{WORKFLOW_FILE}}` and its row in `{{ROOT_REL}}README.md`{{#HUB}}, plus its spoke in `{{ROOT_REL}}{{HUB_DIR}}/` (a gated feature){{/HUB}}.
+- `git status -- .` and `git add -- <paths>`; never a bare `git add -A`, which would take other projects' changes. The autopilot builds in a worktree on branch `{{BRANCH}}` and pushes only commits inside these paths.
+- `.claude/`, `CLAUDE.md` and `.env*` are gitignored and stay local; never commit them (the repo's history was purged of agent files once). Docs, the roadmap and `scripts/autopilot.sh` are committed.
+{{/MONOREPO}}
 
 ## Commands
 
@@ -26,7 +34,7 @@ Change roadmap markers with `roadmap.mjs mark <ID> <todo|~|x|!> [note]`. Marking
 {{COMMANDS_BLOCK}}
 ```
 
-Deploy target: {{LIVE_URL}} via `.github/workflows/{{WORKFLOW_FILE}}` (written by {{DEPLOY_FEATURE}}). `scripts/autopilot.sh` pushes and deploys once, at the end; sessions never do.
+Deploy target: {{LIVE_URL}} via `{{#MONOREPO}}{{ROOT_REL}}{{/MONOREPO}}.github/workflows/{{WORKFLOW_FILE}}` (written by {{DEPLOY_FEATURE}}). `scripts/autopilot.sh` pushes and deploys once, at the end; sessions never do.
 
 ## Never break
 

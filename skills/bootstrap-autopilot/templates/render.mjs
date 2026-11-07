@@ -20,7 +20,8 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-// Template path (under templates/) -> output path (in the repo), and the flag that gates it.
+// Template path (under templates/) -> output path (in the app dir), and the flag that gates it
+// ("!FLAG": only when FLAG is falsy).
 const MANIFEST = [
   ['gitignore', '.gitignore'],
   ['CLAUDE.md', 'CLAUDE.md'],
@@ -48,7 +49,10 @@ const MANIFEST = [
   ['docs/deploy-kit/deploy.yml', 'docs/deploy-kit/deploy.yml'],
   ['docs/deploy-kit/docker-smoke.sh', 'docs/deploy-kit/docker-smoke.sh', null, 0o755],
   ['docs/deploy-kit/Dockerfile.node', 'docs/deploy-kit/Dockerfile.node', 'NODE'],
-  ['github/ci.yml', '.github/workflows/ci.yml'],
+  // A monorepo has one CI workflow at its root: F01 adds this app's jobs to it from the snippet.
+  ['docs/deploy-kit/ci-jobs.yml', 'docs/deploy-kit/ci-jobs.yml', 'MONOREPO'],
+  ['dockerignore', '.dockerignore', 'MONOREPO'],
+  ['github/ci.yml', '.github/workflows/ci.yml', '!MONOREPO'],
   ['deploy/compose.deploy.yaml', 'deploy/compose.deploy.yaml'],
   ['deploy/nginx/app.conf', 'deploy/nginx/{{APP}}.conf'],
   ['deploy/nginx/app-bootstrap.conf', 'deploy/nginx/{{APP}}-bootstrap.conf'],
@@ -145,7 +149,51 @@ function derive(v) {
   d.STACK_SUMMARY = v.STACK_SUMMARY ?? v.STACK;
   d.HEAP_MB = v.HEAP_MB ?? 128;
   d.DATA_DIR = v.DB ? `/opt/${v.APP}/data` : '';
+  Object.assign(d, monorepo(v));
   return d;
+}
+
+const reEscape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// Monorepo mode: the app is APP_DIR inside a bigger repo, and GH_REPO is that repo. The autopilot
+// works in a git worktree on its own branch and may push only the app and a few root files
+// (PUSH_ALLOWED). See reference/bootstrap-json.md. Standalone apps get empty values.
+function monorepo(v) {
+  if (!v.MONOREPO) {
+    return {
+      MONOREPO: false, APP_DIR: '', ROOT_REL: '', BRANCH: '', PUSH_ALLOWED: '', HUB: false, HUB_DIR: '',
+      DEPLOY_SECRETS: '', DEPLOY_ENVIRONMENT: '',
+    };
+  }
+  const dir = v.APP_DIR;
+  if (typeof dir !== 'string' || !/^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/.test(dir) || dir.split('/').some((p) => p === '..' || p === '.'))
+    fail('MONOREPO needs APP_DIR, the app\'s path from the repo root (e.g. "pinpoint")');
+  const hub = v.HUB ? (typeof v.HUB === 'object' ? v.HUB.dir : v.HUB) : '';
+  if (hub && (typeof hub !== 'string' || !/^[A-Za-z0-9._-]+$/.test(hub))) fail('HUB.dir must be a top-level directory name');
+  const workflows = ['ci', `deploy-${v.APP}`, ...(hub ? ['deploy-hub'] : [])].map(reEscape).join('|');
+  const allowed =
+    v.PUSH_ALLOWED ??
+    `^(${reEscape(dir)}/|\\.github/workflows/(${workflows})\\.yml$|README\\.md$${hub ? `|${reEscape(hub)}/` : ''})`;
+  try {
+    new RegExp(allowed);
+  } catch (e) {
+    fail(`PUSH_ALLOWED is not a valid regex: ${e.message}`);
+  }
+  if (allowed.includes("'")) fail('PUSH_ALLOWED must not contain a single quote');
+  const secrets = v.DEPLOY_SECRETS ?? ['SSH_HOST', 'SSH_USER', 'SSH_KEY', 'SSH_KNOWN_HOSTS'];
+  if (!Array.isArray(secrets) || !secrets.every((s) => /^[A-Z][A-Z0-9_]*$/.test(s)))
+    fail('DEPLOY_SECRETS must be an array of secret names');
+  return {
+    MONOREPO: true,
+    APP_DIR: dir,
+    ROOT_REL: '../'.repeat(dir.split('/').length),
+    BRANCH: v.BRANCH ?? `autopilot/${v.APP}`,
+    PUSH_ALLOWED: allowed,
+    HUB: Boolean(hub),
+    HUB_DIR: hub,
+    DEPLOY_SECRETS: secrets.join(' '),
+    DEPLOY_ENVIRONMENT: v.DEPLOY_ENVIRONMENT ?? 'production',
+  };
 }
 
 function renderText(text, vars, where) {
@@ -195,7 +243,7 @@ function main() {
 
   const jobs = [];
   for (const [tpl, outPattern, flag, mode] of MANIFEST) {
-    if (flag && !vars[flag]) continue;
+    if (flag && (flag.startsWith('!') ? vars[flag.slice(1)] : !vars[flag])) continue;
     jobs.push({ tpl, out: renderText(outPattern, vars, outPattern), vars, mode });
   }
   for (const [tpl, outPattern, key, prefix] of PER_ITEM) {
