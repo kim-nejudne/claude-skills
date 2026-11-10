@@ -34,6 +34,10 @@ Change roadmap markers with `roadmap.mjs mark <ID> <todo|~|x|!> [note]`. Marking
 {{COMMANDS_BLOCK}}
 ```
 
+{{#ANDROID}}
+Phone app: `android/` is its own Gradle build. Run Gradle from this directory as `android/gradlew -p android <task>`. No emulator or device here and no adb: phone UI is proven with Robolectric Compose tests, and each changed screen gets a Roborazzi screenshot (`android/app/build/outputs/roborazzi/`). Camera, torch, OCR accuracy, APK install and update, real offline use and background sync on a real phone are Kim checks. The release APK ships inside the image ({{APK_FEATURE}}, `scripts/apk-release.sh`); its signing key never exists locally.
+
+{{/ANDROID}}
 Deploy target: {{LIVE_URL}} via `{{#MONOREPO}}{{ROOT_REL}}{{/MONOREPO}}.github/workflows/{{WORKFLOW_FILE}}` (written by {{DEPLOY_FEATURE}}). `scripts/autopilot.sh` pushes and deploys once, at the end; sessions never do.
 
 ## Never break

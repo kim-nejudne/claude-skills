@@ -32,10 +32,10 @@
       { "matcher": "Edit|Write|NotebookEdit", "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/protect-files.mjs\"" } ] }
     ],
     "PostToolUse": [
-      { "matcher": "Edit|Write", "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/format-file.mjs\"" } ] }
+      { "matcher": "Edit|Write", "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/format-file.mjs\"" }{{FORMAT_HOOKS_EXTRA}} ] }
     ],
     "Stop": [
-      { "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop-typecheck.mjs\"", "timeout": 120 } ] }
+      { "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop-typecheck.mjs\"", "timeout": 120 }{{STOP_HOOKS_EXTRA}} ] }
     ]
   }
 }

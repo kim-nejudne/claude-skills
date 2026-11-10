@@ -71,7 +71,7 @@ jobs:
     name: checks
     if: ${{ github.event.inputs.tag == '' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: {{CHECKS_TIMEOUT}}
     steps:
       - uses: actions/checkout@v4
 {{#NODE}}
@@ -83,6 +83,13 @@ jobs:
           cache-dependency-path: {{APP_DIR}}/{{LOCKFILE}}
 {{/MONOREPO}}
 {{/NODE}}
+{{#ANDROID}}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+{{/ANDROID}}
       - name: install
         run: {{INSTALL_CMD}}
 {{CHECKS_YAML}}
@@ -99,6 +106,10 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@v4
+{{#ANDROID}}
+        with:
+          fetch-depth: 0 # the APK's versionCode counts the commits that changed android/
+{{/ANDROID}}
 {{/MONOREPO}}
 {{#MONOREPO}}
     environment: {{DEPLOY_ENVIRONMENT}}
@@ -163,6 +174,36 @@ jobs:
 {{/NODE}}
       - name: install
         run: {{INSTALL_CMD}}
+{{#ANDROID}}
+
+      # The signed APK and apk/version.json go into the image, which serves them to the phones.
+      - uses: actions/setup-java@v4
+        if: steps.tag.outputs.mode == 'build'
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.tag.outputs.mode == 'build'
+
+      # The release keystore exists only in GitHub secrets (set in prep) and Kim's backup. A
+      # missing secret is the setup's fault, never the code's.
+      - name: decode the release keystore
+        if: steps.tag.outputs.mode == 'build'
+        env:
+          KEYSTORE_B64: ${{ secrets.{{ANDROID_SECRET_PREFIX}}ANDROID_KEYSTORE_B64 }}
+        run: |
+          [ -n "$KEYSTORE_B64" ] || { echo "secret {{ANDROID_SECRET_PREFIX}}ANDROID_KEYSTORE_B64 is not set"; exit 1; }
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.p12"
+
+      # scripts/autopilot.sh treats a failure here as the code's (a repair session): keep the name.
+      - name: build the release APK
+        if: steps.tag.outputs.mode == 'build'
+        env:
+          ANDROID_KEYSTORE: ${{ runner.temp }}/release.p12
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.{{ANDROID_SECRET_PREFIX}}ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.{{ANDROID_SECRET_PREFIX}}ANDROID_KEY_ALIAS }}
+        run: scripts/apk-release.sh
+{{/ANDROID}}
 
       # Builds {{APP}}:<tag> and runs it with the droplet's own settings, read from
       # deploy/compose.deploy.yaml. The image it tested is the image that ships.

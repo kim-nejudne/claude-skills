@@ -17,6 +17,7 @@ Change markers with `node .claude/scripts/roadmap.mjs mark`. A done item collaps
     - `scripts/autopilot.sh`, `docs/` and `deploy/` from the bootstrap are committed with F01, unchanged
     - <web apps> `npm run playtest -- <scenario>` runs a Playwright scenario with one isolated browser context per role; `scripts/playtest/smoke.ts` opens the app and asserts no console errors
     - <design> the DESIGN.md tokens and fonts are wired in (CSS variables or the framework's theme) and the placeholder page uses them
+    - <android> `android/` per `reference/stack-android.md`: `android/gradlew -p android ktlintCheck lintDebug testDebugUnitTest assembleDebug` pass; one Robolectric Compose test renders the placeholder screen with the DESIGN.md theme and writes its Roborazzi screenshot; CI sets up Java 21 and Gradle; `android/tools/fetch-ktlint.sh` installs the format hook's ktlint
   - Tests: <health route test>
 
 - [ ] F02 <title>
@@ -29,11 +30,21 @@ Change markers with `node .claude/scripts/roadmap.mjs mark`. A done item collaps
 
 ## M<n> — Ship
 
+<android only:>
+- [ ] F<n-2> Release APK and update channel
+  - Spec: <platform, distribution and update sections>
+  - Depends: <the last feature that changes the phone app>
+  - Done when:
+    - `scripts/apk-release.sh` (from `docs/deploy-kit/apk-release.sh`) builds the R8 release APK and writes `apk/<app>-<code>.apk` and `apk/version.json`; it runs unsigned here
+    - `apk/.gitkeep` is committed and `/apk/*` ignored; the server serves `GET /apk/version.json` and the APK from `APK_DIR`, and answers 404 when there is none
+    - Kim check: install the signed APK from https://<domain> on the real phone, then deploy a phone change and accept the in-app update
+  - Tests: the server routes; the app's update check against a fake server
+
 - [ ] F<n-1> Docker image and smoke test
   - Spec: <stack/deploy sections>
   - Depends: <the last feature that changes runtime behaviour>
   - Done when:
-    - `Dockerfile` (start from `docs/deploy-kit/Dockerfile.node` or write one for the stack): multi-stage, runs as a non-root user, `HEALTHCHECK` on `<health path>`, stops on SIGTERM in under 5 s
+    - `Dockerfile` (start from `docs/deploy-kit/Dockerfile.node` or write one for the stack): multi-stage, runs as a non-root user, `HEALTHCHECK` on `<health path>`, stops on SIGTERM in under 5 s <android: copies `apk/`; `.dockerignore` lists `android`>
     - `scripts/docker-smoke.sh` (from `docs/deploy-kit/docker-smoke.sh`) builds the image, runs it with the settings in `deploy/compose.deploy.yaml` (port `127.0.0.1:<PORT>` → <container port>, `mem_limit`), and checks `<health path>`, the main page and <the app's critical paths>; wired as `<smoke:docker command>`
     - `mem_limit` in `deploy/compose.deploy.yaml` is set from a measured peak plus headroom and fits the droplet's free memory (DECISIONS row)
     - A smoke script that takes a base URL (`<smoke command> <URL>`) for use against the live site

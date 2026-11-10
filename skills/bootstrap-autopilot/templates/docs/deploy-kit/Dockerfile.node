@@ -34,6 +34,12 @@ ENV NODE_ENV=production \
 COPY --chown=node:node package.json ./
 COPY --chown=node:node --from=prod-deps /app/node_modules ./node_modules
 COPY --chown=node:node --from=build /app/dist ./dist
+{{#ANDROID}}
+# The signed phone app and apk/version.json, built by scripts/apk-release.sh before the image
+# ({{APK_FEATURE}}); apk/ holds only .gitkeep in a local build, and the server then offers no update.
+COPY --chown=node:node apk/ ./apk/
+ENV APK_DIR=/app/apk
+{{/ANDROID}}
 
 # The official image ships an unprivileged `node` user (uid 1000).
 USER node

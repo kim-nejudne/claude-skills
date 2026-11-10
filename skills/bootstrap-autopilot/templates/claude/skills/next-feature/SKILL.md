@@ -48,6 +48,9 @@ Post a plan of 15 lines or fewer: files to touch, approach, tests to write, and 
 {{#WEB}}
 - If the feature has UI, run the `playtest` skill with the feature ID. If the harness or a browser is unavailable, write exact manual test steps instead.
 {{/WEB}}
+{{#ANDROID}}
+- If the feature changes phone UI, its Robolectric Compose tests drive the screen and call `captureRoboImage()` for each changed screen (at DESIGN.md's phone size, and at 1.3× font scale where text is dense). After `verify`, Read those PNGs under `android/app/build/outputs/roborazzi/` and fix what looks wrong. Device-only behaviour (camera, torch, OCR accuracy, install and update, real offline use) goes behind its interface with a fake, plus a Kim check.
+{{/ANDROID}}
 - Check every "Done when" bullet and note the evidence for each (test name, playtest step, command output).
 - A bullet only a person can check (real devices, real accounts or keys, "Kim has reviewed …") does not block: build everything around it, then add exact steps under `## Kim checks` in `docs/PROGRESS.md` (`- [ ] F07: steps · what to look for`).
 - If the same failure survives 3 genuine fix attempts, stop. Run `node .claude/scripts/roadmap.mjs mark <ID> '!' "<what blocks it>"` and report what you tried.

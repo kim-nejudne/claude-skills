@@ -195,6 +195,48 @@ shred -u "$K"; rm -f "$K.pub"
 
 App secrets the build needs at image build time (rare: a public client key) are set the same way with `gh secret set`, and the deploy feature passes them as build args. Runtime secrets stay only in `/opt/<app>/.env`.
 
+## 6b. Android release key (`ANDROID` only, both modes)
+
+The key that signs every release APK. Android installs an update only when it is signed with the same key, so a lost key means uninstalling the app on every phone (and losing what it holds); a leaked one lets anyone who also controls the download sign an "update". It lives in GitHub secrets (the deploy decodes it on the runner) and in Kim's offline backup, nowhere else. Sessions never see it; neither the password nor the key is ever printed.
+
+`P` is the secret prefix: empty standalone, `<APP_ID upper>_` in a monorepo (bootstrap.json). Monorepo first, read-only: none of the three names may exist yet (they would belong to another app).
+
+```bash
+gh secret list --repo <GH_REPO> --json name --jq '.[].name' | grep -E '^<P>ANDROID_KEY' || echo "names free"
+```
+
+Generate, set the secrets and print the certificate fingerprint (public), in **one** command so the password lives only in this shell and a file in a 700 directory:
+
+```bash
+D="$SCRATCH/<app>-release"; install -d -m 700 "$D" && cd "$D" && \
+KS_PASS=$(openssl rand -base64 32 | tr -d '\n') && export KS_PASS && \
+keytool -genkeypair -storetype PKCS12 -keystore release.p12 -alias <app> -keyalg RSA -keysize 4096 \
+  -validity 10000 -dname "CN=<APP_TITLE>" -storepass:env KS_PASS -keypass:env KS_PASS 2>/dev/null && \
+( umask 077; printf '%s\n' "$KS_PASS" > password.txt ) && \
+base64 -w0 release.p12 | gh secret set <P>ANDROID_KEYSTORE_B64 --repo <GH_REPO> && \
+printf '%s' "$KS_PASS" | gh secret set <P>ANDROID_KEYSTORE_PASSWORD --repo <GH_REPO> && \
+gh secret set <P>ANDROID_KEY_ALIAS --repo <GH_REPO> --body <app> && \
+keytool -list -v -keystore release.p12 -storepass:env KS_PASS | grep -m1 'SHA256:'
+```
+
+Record the SHA-256 fingerprint in DECISIONS (it identifies the app's signer; `apksigner verify --print-certs` on any release shows the same). Ask Kim where the backup goes (a USB stick or backup drive path), then encrypt to it. Kim types the passphrase into the pinentry dialog, never into this session; then prove it decrypts:
+
+```bash
+tar -C "$SCRATCH" -cf - <app>-release | gpg --symmetric --cipher-algo AES256 -o <backup path>/<app>-release-key.tar.gpg
+gpg --decrypt <backup path>/<app>-release-key.tar.gpg | tar -tvf -     # lists release.p12 and password.txt
+```
+
+If no pinentry dialog can appear (no display), Kim runs those two lines himself with `!`. Restoring later: `gpg -d … | tar -xf -` gives the keystore and its password, the alias is the app slug.
+
+Then remove the local copy (the backup and GitHub hold it now):
+
+```bash
+shred -u "$D"/release.p12 "$D"/password.txt && rmdir "$D"
+gh secret list --repo <GH_REPO> | grep ANDROID_KEY
+```
+
+Rotating or handing the key to someone else later is a deliberate step for Kim (APK Signature Scheme v3 key rotation with `apksigner rotate`), never a session's.
+
 ## 7. Record
 
 - bootstrap.json: `PORT`, `MEM_LIMIT` if agreed lower. Re-render `deploy/compose.deploy.yaml`, `deploy/nginx/<app>.conf` (if the port changed after installing it, install it again with `nginx -t`), `docs/DECISIONS.md` row 1 (by hand: it may already hold more rows), `scripts/autopilot.sh`, `docs/deploy-kit/*`, `CLAUDE.md`.

@@ -76,7 +76,7 @@ GATE=(
 # Dev servers a session may leave behind (killed only when they run from this repo).
 DEV_PORTS_SS='( {{DEV_PORTS_SS}} )'
 # Deploy steps whose failure is the code's (a repair session), not the infrastructure's.
-CI_STEPS=$'^checks\t({{CI_STEPS_RE}})$|\tbuild and smoke-test the image$'
+CI_STEPS=$'^checks\t({{CI_STEPS_RE}})$|\tbuild and smoke-test the image${{#ANDROID}}|\tbuild the release APK${{/ANDROID}}'
 # Commits a feature session makes (the commit that proves a feature was built).
 FEAT_RE='^feat(\([^)]*\))?: '
 # The option loop shifts them away; the re-execs below need them all.
@@ -113,6 +113,11 @@ done
 SELF=$(realpath -- "${BASH_SOURCE[0]}")
 CACHE=${XDG_CACHE_HOME:-$HOME/.cache}/$APP-autopilot
 mkdir -p "$CACHE"
+{{#ANDROID}}
+# Gradle for android/ keeps its daemons and caches here, apart from Kim's ~/.gradle, so stopping
+# them between sessions never ends a build Kim is running.
+export GRADLE_USER_HOME=$CACHE/gradle
+{{/ANDROID}}
 
 # Run from a copy: bash reads a script as it executes, so an edit to scripts/autopilot.sh while
 # it runs would corrupt the run. AUTOPILOT_HOME carries the project directory across.
@@ -808,6 +813,11 @@ kill_strays() {
       kill "$pid" 2>/dev/null || true
     fi
   done
+{{#ANDROID}}
+  # Gradle daemons outlive the session that started them (2 GB each); only this run's
+  # (GRADLE_USER_HOME above) are stopped.
+  if [[ -x android/gradlew ]]; then android/gradlew -p android --stop -q </dev/null >/dev/null 2>&1 || true; fi
+{{/ANDROID}}
 }
 
 stash_changes() {
@@ -896,6 +906,11 @@ worktree_up() {
     cp -a "$CHECKOUT/.claude/agent-memory" "$WORKTREE/$APP_DIR/.claude/"
   fi
   if [[ -f $CHECKOUT/CLAUDE.md ]]; then cp -- "$CHECKOUT/CLAUDE.md" "$WORKTREE/$APP_DIR/CLAUDE.md"; fi
+{{#ANDROID}}
+  # Also gitignored: the SDK path and the ktlint CLI the format hook runs.
+  if [[ -f $CHECKOUT/android/local.properties ]]; then cp -- "$CHECKOUT/android/local.properties" "$WORKTREE/$APP_DIR/android/"; fi
+  if [[ -d $CHECKOUT/android/.tools ]]; then rsync -a "$CHECKOUT/android/.tools/" "$WORKTREE/$APP_DIR/android/.tools/"; fi
+{{/ANDROID}}
   PROJECT=$WORKTREE/$APP_DIR
   REPO=$WORKTREE
   cd "$PROJECT"
@@ -974,11 +989,11 @@ push_range() {
 # Prints the problems to $RUN/push-guard.txt and returns 1 if there are any.
 SECRET_RE='-----BEGIN ([A-Z]+ )?PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{20,}|sk-ant-[A-Za-z0-9_-]{20,}|sk-(proj-)?[A-Za-z0-9]{32,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|-----BEGIN OPENSSH PRIVATE KEY-----'
 {{^MONOREPO}}
-FORBIDDEN_PATHS_RE='(^|/)(\.env(\..*)?|.*\.pem|.*\.key|id_(rsa|ed25519|ecdsa)(\.pub)?|CLAUDE(\.local)?\.md)$|^\.claude/'
+FORBIDDEN_PATHS_RE='(^|/)(\.env(\..*)?|.*\.pem|.*\.key|id_(rsa|ed25519|ecdsa)(\.pub)?|CLAUDE(\.local)?\.md)$|^\.claude/{{#ANDROID}}|\.(jks|keystore|p12)${{/ANDROID}}'
 {{/MONOREPO}}
 {{#MONOREPO}}
 # Paths are relative to the repo root, so .claude/ may sit at any depth.
-FORBIDDEN_PATHS_RE='(^|/)(\.env(\..*)?|.*\.pem|.*\.key|id_(rsa|ed25519|ecdsa)(\.pub)?|CLAUDE(\.local)?\.md)$|(^|/)\.claude/'
+FORBIDDEN_PATHS_RE='(^|/)(\.env(\..*)?|.*\.pem|.*\.key|id_(rsa|ed25519|ecdsa)(\.pub)?|CLAUDE(\.local)?\.md)$|(^|/)\.claude/{{#ANDROID}}|\.(jks|keystore|p12)${{/ANDROID}}'
 {{/MONOREPO}}
 push_guard() {
   local range out="$RUN/push-guard.txt" bad paths hits
@@ -1042,7 +1057,7 @@ gh_repo_ok() {
 gh_secrets_ok() {
   local names s
   names=$(gh secret list --repo "$GH_REPO" --json name --jq '.[].name')
-  for s in SSH_HOST SSH_USER SSH_KEY SSH_KNOWN_HOSTS; do
+  for s in SSH_HOST SSH_USER SSH_KEY SSH_KNOWN_HOSTS{{#ANDROID}} {{ANDROID_SECRET_PREFIX}}ANDROID_KEYSTORE_B64 {{ANDROID_SECRET_PREFIX}}ANDROID_KEYSTORE_PASSWORD {{ANDROID_SECRET_PREFIX}}ANDROID_KEY_ALIAS{{/ANDROID}}; do
     grep -qx "$s" <<<"$names" || {
       echo "missing secret $s"
       return 1
@@ -1078,6 +1093,11 @@ dry_run_checks() {
   dry_check "push guard: $(push_range) carries no secrets or agent files" push_guard
   dry_check "roadmap.mjs and spec.mjs answer" bash -c 'node .claude/scripts/roadmap.mjs next >/dev/null && node .claude/scripts/spec.mjs --toc >/dev/null'
   dry_check "claude CLI runs" claude --version
+{{#ANDROID}}
+  # Also fills this run's Gradle cache while Kim is at the keyboard.
+  dry_check "Gradle runs android/ here (JDK 21 toolchain, Android SDK)" android/gradlew -p android -q --console=plain help
+  android/gradlew -p android --stop -q </dev/null >/dev/null 2>&1 || true
+{{/ANDROID}}
 {{#MONOREPO}}
   dry_check "main carries nothing unpushed outside $APP_DIR/ and the allowed root files" launch_base_ok
   dry_check "no uncommitted changes in $APP_DIR/ of your checkout" checkout_app_clean
@@ -1135,6 +1155,9 @@ You are running unattended, launched by scripts/autopilot.sh. Kim is away and ca
 - Never push, deploy, run gh, ssh, scp, docker against the droplet, or sudo. Never change git remotes or git config. Never edit docs/spec.md or scripts/autopilot.sh. The script does the push and deploy.
 - Never stage .claude/, CLAUDE.md or .env* (they are gitignored; never force-add them).
 - Build exactly one feature, commit it, then stop.
+{{#ANDROID}}
+- The phone app (android/) has no emulator or device here. Phone UI is checked with Robolectric Compose tests and Roborazzi screenshots. Device-only behaviour (camera, torch, OCR accuracy, APK install and update, real offline use, Doze and background sync) is always a Kim check: build it behind its interface, test it with the fake, queue exact steps. Never use adb.
+{{/ANDROID}}
 {{#MONOREPO}}
 - This app is $APP_DIR/ of a monorepo, and you work in a git worktree of it on branch $BRANCH (the current directory is the app). Touch only files inside it, except exactly these, and only when the feature names them: {{ROOT_REL}}.github/workflows/ci.yml (F01: this app's jobs), {{ROOT_REL}}.github/workflows/$WORKFLOW and {{ROOT_REL}}README.md (the deploy feature){{#HUB}}, and {{ROOT_REL}}{{HUB_DIR}}/ with {{ROOT_REL}}.github/workflows/deploy-hub.yml (the hub spoke feature){{/HUB}}. Every other project in the repo is a read-only reference: copy patterns from it, never edit or import it. The script refuses to push any commit that touches another path.
 - Stage by path (\`git add -- <paths>\`); never \`git add -A\` without \`-- .\` and the named root files. Never switch branches or touch other worktrees.

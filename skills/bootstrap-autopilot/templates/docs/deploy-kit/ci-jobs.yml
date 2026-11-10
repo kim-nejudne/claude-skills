@@ -35,7 +35,7 @@
     needs: {{APP}}-changes
     if: ${{ needs.{{APP}}-changes.outputs.changed == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: {{CHECKS_TIMEOUT}}
     defaults:
       run:
         working-directory: {{APP_DIR}}
@@ -48,6 +48,14 @@
           cache: npm
           cache-dependency-path: {{APP_DIR}}/{{LOCKFILE}}
 {{/NODE}}
+{{#ANDROID}}
+      # {{APP_DIR}}/android/: JDK 21 for Gradle; the runner image has the Android SDK.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+{{/ANDROID}}
       - name: install
         run: {{INSTALL_CMD}}
 {{CHECKS_YAML}}

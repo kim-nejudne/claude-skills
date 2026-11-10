@@ -10,4 +10,8 @@ CLAUDE.md
 .env.*
 !.env.example
 docs
+{{#ANDROID}}
+# The phone app reaches the image only as apk/ (scripts/apk-release.sh).
+android
+{{/ANDROID}}
 *.log

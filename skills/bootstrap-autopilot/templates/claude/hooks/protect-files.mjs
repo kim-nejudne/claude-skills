@@ -50,6 +50,11 @@ try {
   if (base === '.env' || base.startsWith('.env.')) {
     if (base !== '.env.example') block(`${rel}: .env files hold secrets and are off-limits. Code reads env vars; tests use fakes.`);
   }
+{{#ANDROID}}
+  if (/\.(jks|keystore|p12)$/i.test(base)) {
+    block(`${rel}: signing keys never live in the repo. The release keystore exists only in GitHub secrets and Kim's backup.`);
+  }
+{{/ANDROID}}
   if (LOCKFILE && base === LOCKFILE) {
     block(`${rel}: the lockfile changes only through the package manager.`);
   }

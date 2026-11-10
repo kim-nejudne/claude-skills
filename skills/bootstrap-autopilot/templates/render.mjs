@@ -49,6 +49,7 @@ const MANIFEST = [
   ['docs/deploy-kit/deploy.yml', 'docs/deploy-kit/deploy.yml'],
   ['docs/deploy-kit/docker-smoke.sh', 'docs/deploy-kit/docker-smoke.sh', null, 0o755],
   ['docs/deploy-kit/Dockerfile.node', 'docs/deploy-kit/Dockerfile.node', 'NODE'],
+  ['docs/deploy-kit/apk-release.sh', 'docs/deploy-kit/apk-release.sh', 'ANDROID', 0o755],
   // A monorepo has one CI workflow at its root: F01 adds this app's jobs to it from the snippet.
   ['docs/deploy-kit/ci-jobs.yml', 'docs/deploy-kit/ci-jobs.yml', 'MONOREPO'],
   ['dockerignore', '.dockerignore', 'MONOREPO'],
@@ -129,8 +130,7 @@ function derive(v) {
     fail(`REPO_VISIBILITY must be "public" or "private", not ${JSON.stringify(d.REPO_VISIBILITY)}`);
   d.PLAYTEST_CMD = v.PLAYTEST_CMD ?? 'npm run playtest --';
   d.TEST_GLOBS = JSON.stringify(v.TEST_GLOBS ?? ['**/*.test.*', '**/*.spec.*', 'tests/**']);
-  d.FORMATTER_JSON = JSON.stringify(v.FORMATTER);
-  d.TYPECHECK_JSON = JSON.stringify(v.TYPECHECK);
+  Object.assign(d, hookLists(v));
   d.DEV_PORTS_SS = v.DEV_PORTS.map((p) => `sport = :${p}`).join(' or ');
   d.DEV_PORTS_LIST = v.DEV_PORTS.join(', ');
   d.REVIEWER_NAMES = v.INVARIANT_REVIEWERS.map((r) => r.NAME).join(', ');
@@ -150,7 +150,41 @@ function derive(v) {
   d.HEAP_MB = v.HEAP_MB ?? 128;
   d.DATA_DIR = v.DB ? `/opt/${v.APP}/data` : '';
   Object.assign(d, monorepo(v));
+  Object.assign(d, android(v, d));
   return d;
+}
+
+// FORMATTER and TYPECHECK: one object (or null), or an array of them. Entry 0 renders the usual
+// hook file; each later entry (it needs a `name`) renders the same template again as
+// format-file-<name>.mjs or stop-typecheck-<name>.mjs, and settings.json runs it beside the first.
+function hookLists(v) {
+  const split = (key, file, extraHook) => {
+    const list = Array.isArray(v[key]) ? v[key] : [v[key]];
+    for (const e of list.slice(1))
+      if (!e || typeof e.name !== 'string' || !/^[a-z0-9-]+$/.test(e.name))
+        fail(`${key}: every entry after the first needs a "name" (a-z, 0-9, -)`);
+    const extras = list.slice(1).map((e) => ({ out: `.claude/hooks/${file}-${e.name}.mjs`, json: JSON.stringify(e) }));
+    return [JSON.stringify(list[0] ?? null), extras, extras.map((x) => extraHook(x.out)).join('')];
+  };
+  const hook = (out, timeout) =>
+    `, { "type": "command", "command": "node \\"$CLAUDE_PROJECT_DIR/${out}\\""${timeout ? `, "timeout": ${timeout}` : ''} }`;
+  const [FORMATTER_JSON, FORMATTER_EXTRAS, FORMAT_HOOKS_EXTRA] = split('FORMATTER', 'format-file', (o) => hook(o));
+  const [TYPECHECK_JSON, TYPECHECK_EXTRAS, STOP_HOOKS_EXTRA] = split('TYPECHECK', 'stop-typecheck', (o) => hook(o, 120));
+  return { FORMATTER_JSON, FORMATTER_EXTRAS, FORMAT_HOOKS_EXTRA, TYPECHECK_JSON, TYPECHECK_EXTRAS, STOP_HOOKS_EXTRA };
+}
+
+// A native Android client in android/ beside the Node app (reference/stack-android.md). Standalone
+// and monorepo alike; a monorepo's apps share one set of repo secrets, so the keystore's carry the
+// app's name there.
+function android(v, d) {
+  const on = Boolean(v.ANDROID);
+  if (on && !/^F\d+[a-z]?$/.test(v.APK_FEATURE ?? '')) fail('ANDROID needs APK_FEATURE, the release APK feature\'s roadmap ID (e.g. "F22")');
+  return {
+    ANDROID: on,
+    APK_FEATURE: on ? v.APK_FEATURE : '',
+    ANDROID_SECRET_PREFIX: on && d.MONOREPO ? `${d.APP_ID.toUpperCase()}_` : '',
+    CHECKS_TIMEOUT: on ? 30 : 15,
+  };
 }
 
 const reEscape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -246,6 +280,10 @@ function main() {
     if (flag && (flag.startsWith('!') ? vars[flag.slice(1)] : !vars[flag])) continue;
     jobs.push({ tpl, out: renderText(outPattern, vars, outPattern), vars, mode });
   }
+  for (const { out, json } of vars.FORMATTER_EXTRAS)
+    jobs.push({ tpl: 'claude/hooks/format-file.mjs', out, vars: { ...vars, FORMATTER_JSON: json } });
+  for (const { out, json } of vars.TYPECHECK_EXTRAS)
+    jobs.push({ tpl: 'claude/hooks/stop-typecheck.mjs', out, vars: { ...vars, TYPECHECK_JSON: json } });
   for (const [tpl, outPattern, key, prefix] of PER_ITEM) {
     for (const item of vars[key] ?? []) {
       const itemVars = { ...vars };

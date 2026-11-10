@@ -67,3 +67,15 @@ Sketchy (74 features, built unattended from 2026-10-30, live at sketchy.$BOOTSTR
 - 52 features took about 16 hours of sessions plus usage-limit waits: plan on one to two days, not one night. The runner waits out usage limits (reset time from the rate-limit event, else 15/30/60 min backoff) and API outages (5–30 min, 8 tries), keeps the machine awake with `systemd-inhibit`, holds a lock, runs from a copy of itself (bash reads scripts as it goes), and stops after three give-ups in a row rather than burning the rest of the queue.
 - A feature that grows too big is split by its session (F95 into F95a/F95b); the runner's counts follow the split.
 - Kim stops a run with Ctrl-C (the session's process group is signalled, the summary is written) and resumes by starting it again: the `[~]` feature and its uncommitted work are picked up.
+
+## Android, from the scratch build (2026-11-10)
+
+No Android app has run through the autopilot yet. These came from proving `reference/stack-android.md` headless on kim-desktop before any app depends on it; replace them with real lessons after the first one ships.
+
+- **Current AndroidX refuses an old compileSdk.** With `compileSdk = 36`, `checkDebugAarMetadata` failed on 14 libraries that need 37. Bump compileSdk with the libraries; Robolectric can still run an older SDK (`robolectric.properties`).
+- **Robolectric 4.17's SDK 36 sandbox needs `--add-opens=java.base/jdk.internal.access=ALL-UNNAMED`** on the unit-test JVMs, or every Robolectric test dies in `AndroidInterceptors` with an `IllegalAccessException`.
+- **JDK 27 as the default is fine**: Gradle 9.9's launcher runs on it, and `gradle-daemon-jvm.properties` moves the daemon to JDK 21. No `JAVA_HOME` in sessions or the runner.
+- **Lint earns its slot**: its first run failed on a real manifest bug (`CAMERA` without `uses-feature`).
+- **The bundled ML Kit model is native code for four ABIs**: 43 MB release APK, 20 MB with `abiFilters` arm64-v8a and armeabi-v7a.
+- **`gradlew --stop` stops every daemon of that Gradle home**, Kim's included. The runner gives Gradle its own `GRADLE_USER_HOME` so it only ever stops its own.
+- **A checksum fetched without `curl -L` was an HTML redirect page**, and a pipeline without `set -e` went on to pin it into the wrapper. Every download in prep checks its sha256 under `set -euo pipefail` (or a `[[ =~ ^[0-9a-f]{64}$ ]]` guard) before use.

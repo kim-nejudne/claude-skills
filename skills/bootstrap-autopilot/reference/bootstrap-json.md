@@ -57,8 +57,8 @@ In this mode `APP` is still the subdomain, container, `/opt/<app>`, cache dir an
 | `SCAFFOLD_FILE` | Exists once F01 ran (`package.json`); the autopilot skips checks before it |
 | `CHECKS` | Ordered array of `{name, cmd, ciName?, ci?}`: the verify skill, the autopilot gate and CI. `ciName` is the CI step name (the autopilot matches it); `ci: false` keeps a step out of CI |
 | `FORMAT_CMD` | Fixes formatting (`npm run format`) |
-| `FORMATTER` | `{bin, args, exts}` for the format-on-edit hook, or `null`. A `bin` with a `/` is relative to the repo and the hook waits until it exists |
-| `TYPECHECK` | `{cmd: [argv], exts, needs}` for the Stop hook, or `null` |
+| `FORMATTER` | `{bin, args, exts}` for the format-on-edit hook (it runs `bin args <file>`), or `null`. A `bin` with a `/` is relative to the repo and the hook waits until it exists. An array runs several: each entry after the first needs a `name` and gets its own `.claude/hooks/format-file-<name>.mjs` |
+| `TYPECHECK` | `{cmd: [argv], exts, needs}` for the Stop hook, or `null`. An array the same way (`stop-typecheck-<name>.mjs`); each runs only when files with its `exts` changed |
 | `TEST_ONE_CMD` | Runs one test file (`npx vitest run <file>`) |
 | `DEV_CMD` / `DEV_URL` / `DEV_PORTS` | The dev server, its URL, and every port it listens on (stray servers on these are killed between sessions) |
 | `SMOKE_CMD` | Optional, default `npm run smoke --`: runs the smoke script against a base URL |
@@ -75,6 +75,10 @@ In this mode `APP` is still the subdomain, container, `/opt/<app>`, cache dir an
 | `WEB` | `true` renders the `playtester` agent and `playtest` skill (browser app with the Playwright harness) |
 | `DB` | `true` adds the data volume (`/opt/<app>/data` → `/data`, `DATA_DIR=/data`) to the compose file |
 | `DRAIN` | Informational: the app holds live connections or in-memory state (the drain wait is always in the workflow; it is harmless for plain HTTP) |
+| `ANDROID` | Optional: `true` adds the native Android client in `android/` (`reference/stack-android.md`): Java and Gradle in CI, the release APK built and signed in the deploy and copied into the image, the keystore secrets in the dry run and push guard, Gradle daemons stopped between sessions, phone-screen review from Roborazzi screenshots. Works standalone and in a monorepo |
+| `APK_FEATURE` | Required with `ANDROID`: the roadmap ID of the release APK feature (just before `DOCKER_FEATURE`) |
+
+With `ANDROID`, the deploy reads three GitHub secrets set in phase 6: `ANDROID_KEYSTORE_B64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`. In a monorepo they carry the app's name first (`PINPOINT_ANDROID_KEYSTORE_B64`), because the apps share one set of repo secrets.
 
 ## Derived from the spec (phase 5)
 

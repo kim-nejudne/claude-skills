@@ -17,7 +17,7 @@ concurrency:
 jobs:
   checks:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: {{CHECKS_TIMEOUT}}
     steps:
       - uses: actions/checkout@v4
 {{#NODE}}
@@ -26,6 +26,15 @@ jobs:
           node-version: "{{NODE_VERSION}}"
           cache: npm
 {{/NODE}}
+{{#ANDROID}}
+      # android/: JDK 21 for Gradle's daemon and toolchain; the runner image has the Android SDK
+      # and AGP fetches any missing platform. setup-gradle caches and validates the wrapper.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+{{/ANDROID}}
       - name: install
         run: {{INSTALL_CMD}}
 {{CHECKS_YAML}}

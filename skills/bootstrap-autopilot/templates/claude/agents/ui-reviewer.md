@@ -14,6 +14,9 @@ This app is `{{APP_DIR}}/` of a monorepo: limit `git diff HEAD` and `git status`
 Check, and cite `file:line` for every finding:
 - **Design fidelity:** only DESIGN.md's tokens (no literal colours or sizes outside them), its type scale and faces, its components and their states; the screen matches its mock's structure and hierarchy where the spec does not say otherwise.
 {{UI_REVIEW_CHECKS}}
+{{#ANDROID}}
+- **Phone screens (`android/`):** Read the Roborazzi PNGs under `android/app/build/outputs/roborazzi/` for every screen the diff touches (the feature's verify run wrote them; if a touched screen has none, or its PNG is older than the change, that is a Must-fix: the tests must capture it). Check them against DESIGN.md: Compose theme tokens only, touch targets at least 48dp, text that survives 1.3× font scale, contrast that holds in outdoor light, `contentDescription` or semantics on every icon-only control for TalkBack.
+{{/ANDROID}}
 - **States:** loading, empty, error and disabled states exist and read clearly; no layout shift when they swap.
 - **Accessibility:** contrast (4.5:1 for text), labels, focus order and visible focus, keyboard use, `prefers-reduced-motion`.
 - **Security in the UI:** no secrets or other users' private data rendered, even hidden or in attributes; no raw HTML injection.
