@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# Fake `gh` for tests/run.sh. Deploy runs live in $FAKE/runs.tsv (id, event, sha, outcome); each
+# new run, and each re-run, takes its outcome from the next line of $FAKE/deploys (default
+# success). Outcomes: success | missing-env | bad-env (the app rejects a value) | echo-fail (a droplet failure whose log only echoes
+# the ABORT lines in the script) | live (a real live-connections ABORT). Every call is logged.
+# The --log-failed lines below hold the workflow's script, $variables and all.
+# shellcheck disable=SC2016
+set -euo pipefail
+F=$FAKE
+echo "gh $*" >>"$F/gh.log"
+STEP='wait for live connections, swap, gate, roll back if needed'
+touch "$F/runs.tsv" "$F/deploys"
+
+next_outcome() {
+  local o
+  o=$(head -1 "$F/deploys")
+  sed -i 1d "$F/deploys"
+  echo "${o:-success}"
+}
+new_run() {
+  local id
+  id=$(($(wc -l <"$F/runs.tsv") + 1001))
+  printf '%s\t%s\t%s\t%s\n' "$id" "$1" "$2" "$(next_outcome)" >>"$F/runs.tsv"
+  echo "$id"
+}
+outcome_of() { awk -F'\t' -v id="$1" '$1 == id { print $4 }' "$F/runs.tsv"; }
+arg() {
+  local want=$1
+  shift
+  while (($#)); do
+    [[ $1 == "$want" ]] && { echo "$2"; return; }
+    shift
+  done
+}
+
+case "$1 ${2:-}" in
+  'auth status') exit 0 ;;
+  'run list')
+    event=$(arg --event "$@")
+    sha=$(git rev-parse HEAD)
+    if [[ $event == push ]] && ! awk -F'\t' -v s="$sha" '$2 == "push" && $3 == s { f = 1 } END { exit !f }' "$F/runs.tsv"; then
+      new_run push "$sha" >/dev/null
+    fi
+    awk -F'\t' -v e="$event" '$2 == e' "$F/runs.tsv" | tail -1 |
+      jq -R -c --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" 'split("\t") | [{databaseId: (.[0] | tonumber), createdAt: $now, headSha: .[2]}]'
+    ;;
+  'workflow run')
+    new_run workflow_dispatch "$(git rev-parse HEAD)" >/dev/null
+    ;;
+  'run rerun')
+    id=$3
+    o=$(next_outcome)
+    awk -F'\t' -v OFS='\t' -v id="$id" -v o="$o" '$1 == id { $4 = o } 1' "$F/runs.tsv" >"$F/runs.tmp"
+    mv "$F/runs.tmp" "$F/runs.tsv"
+    touch "$F/requeued-$id"
+    ;;
+  'run view')
+    id=$3
+    o=$(outcome_of "$id")
+    json=$(arg --json "$@")
+    if [[ " $* " == *' --log-failed '* ]]; then
+      # The workflow's script as GitHub echoes it: its $variables stay literal.
+      ts='2026-11-08T11:30:06.6239484Z'
+      printf 'droplet\t%s\t%s \e[36;1m        echo "ABORT: $n live connection(s) after 10 min; nothing changed."\e[0m\n' "$STEP" "$ts"
+      printf 'droplet\t%s\t%s \e[36;1m      echo "ABORT: missing env:$missing (set in /opt/pantry/.env); nothing changed."\e[0m\n' "$STEP" "$ts"
+      case $o in
+        missing-env) printf 'droplet\t%s\t%s ABORT: missing env: ADMIN_HASH MAIL_KEY (set in /opt/pantry/.env); nothing changed.\n' "$STEP" "$ts" ;;
+        bad-env)
+          printf 'droplet\t%s\t%s app-1  | Error: Invalid environment: ADMIN_HASH must be scrypt$N$r$p$salt$hash: expected 6 parts\n' "$STEP" "$ts"
+          printf 'droplet\t%s\t%s pantry:abc123 never became healthy. Recent logs:\n' "$STEP" "$ts"
+          ;;
+        live) printf 'droplet\t%s\t%s ABORT: 2 live connection(s) after 10 min; nothing changed.\n' "$STEP" "$ts" ;;
+        *) printf 'droplet\t%s\t%s ssh: connect to host droplet port 22: Connection timed out\n' "$STEP" "$ts" ;;
+      esac
+    elif [[ $json == url ]]; then
+      echo "https://github.invalid/runs/$id"
+    elif [[ $json == status ]]; then
+      if [[ -e $F/requeued-$id ]]; then
+        rm -f "$F/requeued-$id"
+        echo in_progress
+      else
+        echo completed
+      fi
+    elif [[ $o == success ]]; then
+      echo '{"status":"completed","conclusion":"success","jobs":[]}'
+    else
+      jq -n -c --arg s "$STEP" '{status: "completed", conclusion: "failure", jobs: [{name: "droplet", steps: [{name: $s, status: "completed", conclusion: "failure"}]}]}'
+    fi
+    ;;
+  *)
+    echo "fake gh: unhandled: $*" >&2
+    exit 1
+    ;;
+esac

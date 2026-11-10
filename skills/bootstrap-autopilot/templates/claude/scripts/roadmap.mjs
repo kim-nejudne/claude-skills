@@ -73,16 +73,17 @@ function newestProgress(count) {
     .slice(0, count);
 }
 
-// Waits on a gate itself, or depends (directly or not) on an unfinished gated item.
-function gatedBy(items, item, seen = new Set()) {
+// Waits on a gate or a blocked item itself, or depends (directly or not) on an unfinished gated
+// or blocked one. The autopilot ships what is built while these wait.
+function heldBy(items, item, seen = new Set()) {
   if (seen.has(item.id)) return null;
   seen.add(item.id);
-  if (item.gate && item.mark !== 'x') return item;
+  if (item.mark === '!' || (item.gate && item.mark !== 'x')) return item;
   for (const dep of item.depends) {
     const d = items.find((i) => i.id === dep);
     if (d && d.mark !== 'x') {
-      const g = gatedBy(items, d, seen);
-      if (g) return g;
+      const h = heldBy(items, d, seen);
+      if (h) return h;
     }
   }
   return null;
@@ -118,10 +119,13 @@ function next(requested) {
     pick = features.find((i) => i.mark === ' ' && !i.gate && unmetDeps(items, i).length === 0);
     if (!pick) {
       const todo = features.filter((i) => i.mark === ' ');
-      const waiting = todo.filter((i) => gatedBy(items, i));
+      const waiting = todo.filter((i) => heldBy(items, i));
+      const onBlocked = waiting.some((i) => heldBy(items, i).mark === '!');
       if (!todo.length) out.push('Nothing left: every feature is done or blocked.');
       else if (waiting.length === todo.length)
-        out.push(`Nothing left: ${todo.length} feature(s) wait on a gate only Kim can open (${waiting.map((i) => i.id).join(', ')}).`);
+        out.push(
+          `Nothing left: ${todo.length} feature(s) wait on ${onBlocked ? 'blocked or gated features' : 'a gate only Kim can open'} (${waiting.map((i) => i.id).join(', ')}).`,
+        );
       else
         for (const i of todo.filter((t) => !waiting.includes(t)).slice(0, 5))
           out.push(`Not eligible: ${i.id} waits on ${unmetDeps(items, i).join(', ')}`);

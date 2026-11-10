@@ -68,6 +68,19 @@ Sketchy (74 features, built unattended from 2026-10-30, live at sketchy.$BOOTSTR
 - A feature that grows too big is split by its session (F95 into F95a/F95b); the runner's counts follow the split.
 - Kim stops a run with Ctrl-C (the session's process group is signalled, the summary is written) and resumes by starting it again: the `[~]` feature and its uncommitted work are picked up.
 
+## Philo and Pinpoint: what the end of a run hid (2026-11-06, 2026-11-08)
+
+- **Philo's push guard refused after 14h40m and $185.** 39 features built, then the push stopped over test fixtures like `sk-ant-api03-FAKEFAKE…`: fake, but shaped like real keys. Nothing had looked until the end.
+  → The guard runs after every feature commit; a refused commit is taken back out of history and the next attempt is told why. `.claude/rules/tests.md` says how to write fakes that don't look real. There is no allowlist a session could add to.
+- **Pinpoint's first deploy came after the whole build and crash-looped on its env.** `ADMIN_PASSWORD_HASH` in the droplet's `.env` was malformed, and the app's startup check threw `Invalid environment: ADMIN_PASSWORD_HASH must be scrypt$N$r$p$salt$hash…`.
+  The README's way of adding it was broken too: root's `>>` into `deploy`'s file fails in the sticky dir (it now appends with `runuser -u deploy`).
+  → The deploy is F03, and the autopilot deploys right after it, so the droplet, secrets, env and workflow are proven on day one. A crash with an `Invalid environment:` line (`reference/stack-node.md`) is Kim's to fix on the box, never a repair session (which could only loosen the check). The workflow also ships `.env.example` and stops before the swap (`ABORT: missing env: …`) while a required name is unset; the runner reports both instead of re-running.
+- **The runner read Pinpoint's crash as live connections.** It grepped the failed log for `live connection(s) after 10 min`, and GitHub's log echoes each step's script, `echo "ABORT: …"` included. So it forced a deploy (which ends live users' connections), re-ran a failure that could only fail again, and stopped with the code pushed but not live.
+  → Markers count only as a step's own output: right after the timestamp, where the echoed script has a colour escape. An app that never became healthy is the code's fault and gets a repair session.
+- **Sessions could reach SSH.** Kim's `~/.ssh/id_ed25519` has no passphrase, so blanking `SSH_AUTH_SOCK` and denying `ssh`/`git push` by prefix would not have stopped `bash -c 'ssh root@…'` or a push to an explicit `git@github.com:` URL.
+  → Sessions run in bubblewrap with an empty `~/.ssh` and gh config, and `GIT_SSH_COMMAND=false`; the dry run proves both.
+- **One blocked feature held back everything else.** Blocked features (after their extra pass) now wait like gated ones, and what doesn't depend on them ships.
+
 ## Android, from the scratch build (2026-11-10)
 
 No Android app has run through the autopilot yet. These came from proving `reference/stack-android.md` headless on kim-desktop before any app depends on it; replace them with real lessons after the first one ships.

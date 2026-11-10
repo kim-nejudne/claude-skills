@@ -39,4 +39,4 @@ GitHub secrets: the monorepo's shared deploy secrets ({{DEPLOY_SECRETS}}, enviro
 Android release key: GitHub secrets `{{ANDROID_SECRET_PREFIX}}ANDROID_KEYSTORE_B64`, `{{ANDROID_SECRET_PREFIX}}ANDROID_KEYSTORE_PASSWORD` and `{{ANDROID_SECRET_PREFIX}}ANDROID_KEY_ALIAS`, set in prep; Kim holds the only other copy, offline. Phones accept an update only when it is signed with the same key, so a lost key means reinstalling the app (and losing the phone's data) on every phone. The workflow decodes it on the runner for `scripts/apk-release.sh`; it never reaches the image, the repo or a session.
 
 {{/ANDROID}}
-{{DEPLOY_FEATURE}} deletes this folder once the files are in place.
+The release check (the roadmap's last feature) deletes this folder once every file is in place{{#ANDROID}}; {{APK_FEATURE}} still needs `apk-release.sh` from it{{/ANDROID}}.

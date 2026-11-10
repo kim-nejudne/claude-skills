@@ -40,7 +40,7 @@ Post a plan of 15 lines or fewer: files to touch, approach, tests to write, and 
 ## 5. Implement
 - For pure logic, write the tests first. Work in small steps and keep the app runnable.
 - Follow `CLAUDE.md` and `.claude/rules/`.
-- External services: code reads keys from environment variables and talks to them through one module each. Tests and development use a fake of that module. Never ask for, read or write a real key; `.env*` is off-limits.
+- External services: code reads keys from environment variables and talks to them through one module each. Tests and development use a fake of that module. Never ask for, read or write a real key; `.env*` is off-limits. A new env var goes into `.env.example` in the same feature; mark it `# optional` on its line if the app starts without it. The deploy refuses to start while a required one is unset on the droplet, and Kim sets it there (add a Kim check naming it).
 - Stay in scope. Put ideas and nice-to-haves under `## Backlog` in ROADMAP.md, not in the code.
 
 ## 6. Verify

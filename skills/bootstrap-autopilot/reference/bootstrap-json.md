@@ -23,7 +23,7 @@ Strings are plain unless noted. Every key below is required unless marked option
 | `MEM_LIMIT` | `"256m"` | Provisional until the Docker feature measures it |
 | `HEAP_MB` | `128` | Optional, Node only: `--max-old-space-size`, about half of `MEM_LIMIT` |
 | `MAX_BODY` | `"1m"` | Optional: nginx `client_max_body_size` |
-| `DOCKER_FEATURE` / `DEPLOY_FEATURE` | `"F23"` / `"F24"` | The last two roadmap IDs |
+| `DOCKER_FEATURE` / `DEPLOY_FEATURE` | `"F02"` / `"F03"` | The Docker and deploy features, right after F01 (`reference/roadmap.md`) |
 | `BOOTSTRAP_DATE` | `"2026-11-02"` | Optional, defaults to today |
 
 ## Monorepo mode
@@ -76,7 +76,7 @@ In this mode `APP` is still the subdomain, container, `/opt/<app>`, cache dir an
 | `DB` | `true` adds the data volume (`/opt/<app>/data` → `/data`, `DATA_DIR=/data`) to the compose file |
 | `DRAIN` | Informational: the app holds live connections or in-memory state (the drain wait is always in the workflow; it is harmless for plain HTTP) |
 | `ANDROID` | Optional: `true` adds the native Android client in `android/` (`reference/stack-android.md`): Java and Gradle in CI, the release APK built and signed in the deploy and copied into the image, the keystore secrets in the dry run and push guard, Gradle daemons stopped between sessions, phone-screen review from Roborazzi screenshots. Works standalone and in a monorepo |
-| `APK_FEATURE` | Required with `ANDROID`: the roadmap ID of the release APK feature (just before `DOCKER_FEATURE`) |
+| `APK_FEATURE` | Required with `ANDROID`: the roadmap ID of the release APK feature (just before the release check) |
 
 With `ANDROID`, the deploy reads three GitHub secrets set in phase 6: `ANDROID_KEYSTORE_B64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`. In a monorepo they carry the app's name first (`PINPOINT_ANDROID_KEYSTORE_B64`), because the apps share one set of repo secrets.
 

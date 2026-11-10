@@ -5,8 +5,13 @@
 # box re-points IMAGE_TAG, restarts the container and waits for {{HEALTH_PATH}}, rolling back if it
 # never answers. The droplet builds nothing.
 #
-# The job names (`checks`, `droplet`), the step names and the "ABORT: N live connection(s) after
-# 10 min" line are matched by scripts/autopilot.sh; keep them.
+# The job names (`checks`, `droplet`), the step names, the "ABORT: N live connection(s) after
+# 10 min" and "ABORT: missing env:" lines and "never became healthy" are matched by
+# scripts/autopilot.sh; keep them.
+#
+# Env: .env.example ships beside compose.yaml as env.example. Every name in it must be set in
+# /opt/{{APP}}/.env (or in compose.yaml's `environment:`), unless its line says `# optional`; otherwise the deploy stops before touching
+# the running app, and Kim sets the value on the box.
 #
 # Live connections: nginx keeps no upstream keepalive (deploy/nginx/{{APP}}.conf), so every
 # established connection to 127.0.0.1:{{PORT}} is a client in the middle of something (a WebSocket,
@@ -221,6 +226,11 @@ jobs:
           docker save "{{APP}}:$TAG" | gzip -1 | ssh droplet 'gunzip | docker load'
           ssh droplet "docker image inspect {{APP}}:$TAG --format 'on the box: {{.RepoTags}} {{.Size}} bytes'"
           scp -q deploy/compose.deploy.yaml droplet:/opt/{{APP}}/compose.yaml
+          if [ -f .env.example ]; then
+            scp -q .env.example droplet:/opt/{{APP}}/env.example
+          else
+            ssh droplet 'rm -f /opt/{{APP}}/env.example'
+          fi
 
       # Everything that mutates the box happens in this one script: wait for live connections
       # to drain, re-point, restart, gate, roll back if needed. The previous image stays on the
@@ -240,6 +250,22 @@ jobs:
             docker images {{APP}} --format '  {{.Tag}}  {{.CreatedSince}}'
             exit 1
           }
+
+          # Every env var the app needs is set (names only; values are never printed).
+          if [ -f env.example ]; then
+            missing=""
+            for k in $(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' env.example | grep -viE '#[[:space:]]*optional' | cut -d= -f1); do
+              [ "$k" = IMAGE_TAG ] && continue
+              # Set by compose.yaml's `environment:` instead.
+              grep -qE "^[[:space:]]+$k:" compose.yaml && continue
+              v=$(sed -n "s/^$k=//p" .env | tail -1 | tr -d "\"' ")
+              [ -n "$v" ] || missing="$missing $k"
+            done
+            if [ -n "$missing" ]; then
+              echo "ABORT: missing env:$missing (set in /opt/{{APP}}/.env); nothing changed."
+              exit 1
+            fi
+          fi
 
           live() { ss -Htn state established '( sport = :{{PORT}} )' | wc -l; }
           if [ "$FORCE" = 1 ]; then

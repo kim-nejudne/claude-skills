@@ -32,7 +32,8 @@ deploy/            compose.deploy.yaml, nginx/, placeholder/ (bootstrap)
 - `eslint.config.js`: flat config; `js.configs.recommended`, `tseslint.configs.recommended`, node globals for `server/ shared/ scripts/ *.config.* .claude/**/*.mjs`, browser globals plus `react-hooks` for `client/`, `eslint-config-prettier` last; ignore `dist/ coverage/ .playtest/ test-results/ playwright-report/`.
 - `.prettierrc.json`: `{"singleQuote": true, "printWidth": 100}`. `.prettierignore`: `docs/`, `.claude/`, `dist/`, `coverage/`, `.playtest/`, `package-lock.json`, `deploy/`.
 - `vite.config.ts`: root `client`, build to `dist/client`, server host `0.0.0.0` port 5173 with the proxies; vitest `include: ['{client,server,shared,scripts}/**/*.test.{ts,tsx}']`, node environment (jsdom per file where needed).
-- `.env.example`: every env var the app reads, with fake or empty values and a comment each. Never a real value.
+- `.env.example`: every env var the app reads, with fake or empty values and a comment each. Never a real value. A var the app starts without gets `# optional` at the end of its line; the deploy refuses to start while any other is unset on the droplet.
+- The server parses its env once at startup and throws `Invalid environment: <NAME> <what is wrong>` (never the value) when one is malformed. The autopilot reads that line in a failed deploy as Kim's to fix on the droplet, not as a bug to repair.
 
 ## Runtime stubs
 

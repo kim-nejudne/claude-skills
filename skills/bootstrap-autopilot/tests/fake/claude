@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Fake `claude -p` for tests/run.sh: builds the roadmap's next feature the way $FAKE/plan says
+# ("<ID> <action>" lines; default ok) and prints the stream-json events the runner reads.
+#   ok        a source file, mark x, one feat: commit
+#   fakekey   like ok, plus a test with a real-looking fake key, unless the runner's push-guard
+#             note is in the system prompt (then a placeholder)
+#   workflow  like ok, plus the deploy workflow file
+#   block     mark the feature blocked, commit nothing
+# A prompt that starts "These checks fail" is a repair: remove FAIL_CHECKS and commit a fix.
+set -euo pipefail
+if [[ ${1:-} == --version ]]; then
+  echo '0.0.0 (fake claude)'
+  exit 0
+fi
+prompt='' rules=''
+while (($#)); do
+  case $1 in
+    -p) prompt=$2 && shift ;;
+    --append-system-prompt) rules=$2 && shift ;;
+  esac
+  shift
+done
+echo '{"type":"system","subtype":"init","slash_commands":["next-feature"]}'
+result() { echo '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.01,"duration_ms":1000,"num_turns":3,"result":"done"}'; }
+
+if [[ $prompt == 'These checks fail'* ]]; then
+  echo "repair" >>"$FAKE/sessions.log"
+  rm -f FAIL_CHECKS
+  git add -A && git commit -qm 'fix: make the checks pass'
+  result
+  exit 0
+fi
+
+rm_js=(node .claude/scripts/roadmap.mjs)
+id=$("${rm_js[@]}" next | sed -nE 's/^(Resume|Next eligible): ([FB][0-9]+[a-z]?).*/\2/p' | head -1)
+[[ -n $id ]] || { result; exit 0; }
+action=$(sed -n "s/^$id //p" "$FAKE/plan" 2>/dev/null)
+noted=0
+[[ $rules == *'push guard refused'* ]] && noted=1
+echo "$id ${action:-ok} note=$noted" >>"$FAKE/sessions.log"
+title=$(sed -nE "s/^- \[.\] $id (.*)/\1/p" docs/ROADMAP.md)
+"${rm_js[@]}" mark "$id" '~' >/dev/null
+
+mkdir -p src
+case ${action:-ok} in
+  block)
+    "${rm_js[@]}" mark "$id" '!' "fake: cannot build" >/dev/null
+    echo "// half-built $id" >"src/$id.js"
+    result
+    exit 0
+    ;;
+  fakekey)
+    if ((noted)); then
+      echo "const KEY = 'test-anthropic-key';" >"src/$id.test.js"
+    else
+      echo "const KEY = 'sk-ant-api03-FAKEFAKEFAKEFAKEFAKEFAKE-0000';" >"src/$id.test.js"
+    fi
+    ;;
+  workflow)
+    mkdir -p .github/workflows
+    echo 'name: Deploy (fake)' >.github/workflows/deploy-pantry.yml
+    ;;
+esac
+echo "// $id" >"src/$id.js"
+"${rm_js[@]}" mark "$id" x >/dev/null
+git add -A
+git commit -qm "feat: $id $title"
+result
