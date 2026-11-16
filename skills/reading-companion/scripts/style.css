@@ -1,0 +1,136 @@
+/* Reading companion stylesheet. Rendered by Chromium print-to-PDF (US Letter). */
+:root {
+  --accent: #7A2E2E;        /* oxblood */
+  --accent-soft: #F5ECEA;   /* callout fill */
+  --rule: #DCC8C4;
+  --ink: #1F1B1A;
+  --muted: #5E5654;
+  --serif: "Crimson Pro", "Crimson", Georgia, serif;
+  --sans: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+}
+
+@page {
+  size: Letter;
+  margin: 0.8in 0.85in 0.85in 0.85in;
+  @bottom-left {
+    content: "";  /* build.py injects the running title per document */
+    font: 500 7.5pt "IBM Plex Sans", sans-serif;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #5E5654;
+  }
+  @bottom-right {
+    content: counter(page);
+    font: 600 8pt "IBM Plex Sans", sans-serif;
+    color: #7A2E2E;
+  }
+}
+
+html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+body {
+  margin: 0;
+  background: #fff;
+  color: var(--ink);
+  font: 400 11.5pt/1.42 var(--serif);
+  font-variant-numeric: oldstyle-nums proportional-nums;
+  hyphens: auto;
+  text-align: left;
+}
+
+/* ---------- Header ---------- */
+.masthead { border-top: 3pt solid var(--accent); padding-top: 10pt; margin-bottom: 12pt; }
+.eyebrow {
+  font: 600 8pt var(--sans); letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--accent); margin: 0 0 4pt;
+}
+h1 {
+  font: 700 21pt/1.12 var(--sans); letter-spacing: -0.01em;
+  margin: 0; color: var(--ink);
+}
+.subtitle { font: 400 13pt/1.25 var(--sans); color: var(--muted); margin: 3pt 0 8pt; }
+.meta {
+  font: 400 8.5pt/1.4 var(--sans); color: var(--muted);
+  border-top: 0.5pt solid var(--rule); border-bottom: 0.5pt solid var(--rule);
+  padding: 4pt 0; margin: 0;
+}
+.meta b { color: var(--ink); font-weight: 600; }
+.citation { font-size: 9.5pt; line-height: 1.35; color: var(--muted); margin: 5pt 0 0; }
+.citation::before {
+  content: "Cite: "; font: 600 7.5pt var(--sans); letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--accent);
+}
+
+/* ---------- Headings ---------- */
+h2 {
+  font: 700 13pt/1.2 var(--sans); color: var(--accent);
+  margin: 18pt 0 6pt; padding-bottom: 3pt; border-bottom: 0.75pt solid var(--rule);
+  break-after: avoid;
+}
+h2 .num { font-weight: 500; color: var(--muted); margin-right: 4pt; }
+h3 {
+  font: 600 10.5pt/1.25 var(--sans); color: var(--ink);
+  margin: 11pt 0 3pt; break-after: avoid;
+  display: flex; justify-content: space-between; gap: 12pt; align-items: baseline;
+}
+h3 .pp, .pp {
+  font: 500 8pt var(--sans); color: var(--accent); white-space: nowrap; letter-spacing: 0.02em;
+}
+h4 { font: 600 9.5pt var(--sans); text-transform: uppercase; letter-spacing: 0.08em;
+     color: var(--accent); margin: 9pt 0 2pt; break-after: avoid; }
+p { margin: 0 0 6pt; orphans: 3; widows: 3; }
+em { font-style: italic; }
+strong { font-weight: 600; }
+
+/* ---------- Primer (page 1) ---------- */
+.primer {
+  background: var(--accent-soft); border-left: 3pt solid var(--accent);
+  padding: 8pt 12pt 4pt; break-after: page;
+  font-size: 10.5pt; line-height: 1.34;  /* primer must fit page 1 under the masthead */
+}
+.primer.glance { break-after: auto; }  /* overview: no reading split, let it flow */
+.primer > h2 { margin-top: 0; border-bottom-color: var(--accent); }
+.primer h4:first-of-type { margin-top: 2pt; }
+.primer ul { margin: 0 0 6pt; padding-left: 13pt; }
+.primer li { margin-bottom: 2.5pt; }
+.thesis { font-size: 11.5pt; line-height: 1.34; }
+.terms-preview { font-size: 10.5pt; }
+.terms-preview em { font-style: italic; color: var(--accent); }
+
+/* ---------- Lists ---------- */
+ul, ol { margin: 0 0 7pt; padding-left: 16pt; }
+li { margin-bottom: 3pt; }
+li > p { margin-bottom: 3pt; }
+
+.argument ol { counter-reset: step; list-style: none; padding-left: 0; }
+.argument ol > li { counter-increment: step; position: relative; padding-left: 24pt; margin-bottom: 5pt; }
+.argument ol > li::before {
+  content: counter(step); position: absolute; left: 0; top: 1pt;
+  width: 15pt; height: 15pt; border-radius: 50%; background: var(--accent); color: #fff;
+  font: 600 8pt/15pt var(--sans); text-align: center;
+}
+
+/* ---------- Glossary / who's who ---------- */
+.glossary dl, .people dl { margin: 0; }
+.glossary dt, .people dt {
+  font: 600 9.5pt var(--sans); color: var(--ink); margin-top: 6pt; break-after: avoid;
+}
+.glossary dt em { color: var(--accent); font-style: italic; font-weight: 600; }
+.glossary dd, .people dd { margin: 1pt 0 0 0; padding-left: 10pt; border-left: 1.5pt solid var(--rule); }
+.glossary dd p, .people dd p { margin: 0; }
+
+/* ---------- Quotations ---------- */
+blockquote {
+  margin: 8pt 0; padding: 7pt 12pt 6pt; background: var(--accent-soft);
+  border-left: 3pt solid var(--accent); break-inside: avoid;
+}
+blockquote p { margin: 0 0 3pt; font-size: 11pt; }
+blockquote p:last-child { margin: 0; }
+blockquote .src { display: block; text-align: right; font: 500 8pt var(--sans); color: var(--accent); }
+
+.note { font: 400 8.5pt/1.4 var(--sans); color: var(--muted); }
+hr { border: 0; border-top: 0.75pt solid var(--rule); margin: 12pt 0; }
+table { border-collapse: collapse; width: 100%; font-size: 10pt; margin: 6pt 0 10pt; }
+th { font: 600 8.5pt var(--sans); text-align: left; color: var(--accent);
+     border-bottom: 1pt solid var(--accent); padding: 3pt 6pt 3pt 0; }
+tr { break-inside: avoid; }
+td { border-bottom: 0.5pt solid var(--rule); padding: 4pt 6pt 4pt 0; vertical-align: top; }
