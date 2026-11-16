@@ -4,6 +4,8 @@
 !.env.example
 *.pem
 *.key
+# Vercel CLI link and pulled env (a Vercel-hosted app).
+.vercel/
 # Agent files stay local (Claude Code setup, autopilot logs live in ~/.cache).
 .claude/
 CLAUDE.md

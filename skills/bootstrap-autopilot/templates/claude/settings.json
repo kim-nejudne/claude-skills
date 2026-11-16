@@ -16,12 +16,13 @@
     "ask": [
       "Bash(git push *)", "Bash(git reset *)", "Bash(git checkout *)", "Bash(git restore *)",
       "Bash(git clean *)", "Bash(git rebase *)", "Bash(git remote *)",
-      "Bash(docker *)", "Bash(ssh *)", "Bash(scp *)", "Bash(rsync *)", "Bash(gh *)",
+      "Bash(docker *)", "Bash(ssh *)", "Bash(scp *)", "Bash(rsync *)", "Bash(gh *)",{{#VERCEL}} "Bash(vercel *)",{{/VERCEL}}
       "Bash(node .claude/scripts/roadmap.mjs ungate *)"
     ],
     "deny": [
       "Read(./.env)", "Read(./.env.*)", "Read(~/.ssh/**)",
-      "Bash(cat .env*)", "Bash(cat ./.env*)"
+      "Bash(cat .env*)", "Bash(cat ./.env*)"{{#VERCEL}},
+      "Read(./.vercel/**)", "mcp__plugin_vercel_vercel"{{/VERCEL}}
     ]
   },
   "hooks": {

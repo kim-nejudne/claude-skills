@@ -1,0 +1,140 @@
+# Push-to-deploy for {{DOMAIN}} on Vercel ({{VERCEL_SCOPE}}/{{VERCEL_PROJECT}}).
+#
+# The checks run on the runner. Then `vercel pull` reads the project's production env, the
+# deploy stops while a name in .env.example is unset there, migrations (if the app has a
+# `db:migrate` script) run against the production database, `vercel build` builds on the runner
+# and `vercel deploy --prebuilt --prod` ships it. If {{HEALTH_PATH}} never answers, the previous
+# production deployment is restored with `vercel rollback`.
+#
+# The project has no Git connection: this workflow is the only way code reaches Vercel.
+# Migrations run before the new code is live, so they must be additive (old code keeps working).
+#
+# The job names (`checks`, `vercel`), the step name `vercel build`, the check step names, the
+# "ABORT: missing env:" line and "never became healthy" are matched by scripts/autopilot.sh;
+# keep them.
+#
+# Env: every name in .env.example must be set in the project's production env, unless its line
+# says `# optional`. Kim sets values with `vercel env add NAME production`; this workflow prints
+# names only, never values.
+#
+# Secrets (set in prep): VERCEL_TOKEN (Kim's token, scoped to {{VERCEL_SCOPE}}), VERCEL_ORG_ID,
+# VERCEL_PROJECT_ID.
+
+name: Deploy {{APP_TITLE}}
+
+on:
+  push:
+    branches: [main]
+    # Docs and the roadmap do not ship.
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-{{APP}}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  test:
+    name: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: {{CHECKS_TIMEOUT}}
+    steps:
+      - uses: actions/checkout@v4
+{{#NODE}}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "{{NODE_VERSION}}"
+          cache: npm
+{{/NODE}}
+      - name: install
+        run: {{INSTALL_CMD}}
+{{CHECKS_YAML}}
+
+  deploy:
+    name: vercel
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+{{#NODE}}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "{{NODE_VERSION}}"
+          cache: npm
+{{/NODE}}
+      - name: install
+        run: |
+          {{INSTALL_CMD}}
+          npm install -g vercel@54.0.0
+
+      - name: production env
+        run: vercel pull --yes --environment=production --token "$VERCEL_TOKEN"
+
+      # Names only; values are never printed.
+      - name: check env names
+        run: |
+          f=.vercel/.env.production.local
+          [ -f .env.example ] || { echo "no .env.example; nothing to check"; exit 0; }
+          missing=""
+          for k in $(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' .env.example | grep -viE '#[[:space:]]*optional' | cut -d= -f1); do
+            v=$(sed -n "s/^$k=//p" "$f" | tail -1 | tr -d "\"' ")
+            [ -n "$v" ] || missing="$missing $k"
+          done
+          if [ -n "$missing" ]; then
+            echo "ABORT: missing env:$missing (set in the Vercel project's production env); nothing changed."
+            exit 1
+          fi
+          echo "every name in .env.example is set"
+
+      - name: migrate
+        run: |
+          if [ "$(npm pkg get scripts.db:migrate)" = "{}" ]; then echo "no db:migrate script"; exit 0; fi
+          set -a
+          . ./.vercel/.env.production.local
+          set +a
+          npm run db:migrate
+
+      # scripts/autopilot.sh treats a failure here as the code's (a repair session): keep the name.
+      - name: vercel build
+        run: vercel build --prod --token "$VERCEL_TOKEN"
+
+      - name: deploy, gate, roll back if needed
+        run: |
+          # What the domain serves now, to roll back to (none on the very first deploy).
+          prev=$(vercel inspect "{{DOMAIN}}" --format json --token "$VERCEL_TOKEN" 2>/dev/null | jq -r '.id // empty' || true)
+          echo "previous production deployment: ${prev:-<none>}"
+          url=$(vercel deploy --prebuilt --prod --token "$VERCEL_TOKEN")
+          echo "deployed $url"
+          for i in $(seq 1 30); do
+            h=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "{{LIVE_URL}}{{HEALTH_PATH}}" || true)
+            if [ "$h" = 200 ]; then echo "  healthy after $i attempt(s)"; exit 0; fi
+            sleep 2
+          done
+          echo "{{APP}}:${GITHUB_SHA::12} never became healthy (health=${h:-none}). Its answer:"
+          curl -s --max-time 5 "{{LIVE_URL}}{{HEALTH_PATH}}" | head -c 2000 || true
+          echo
+          if [ -n "$prev" ]; then
+            echo "rolling back to $prev"
+            vercel rollback "$prev" --yes --token "$VERCEL_TOKEN" || echo "WARNING: rollback failed; check the project in the Vercel dashboard."
+          else
+            echo "no previous production deployment to roll back to"
+          fi
+          exit 1
+
+      - name: smoke
+        run: {{SMOKE_CMD}} {{LIVE_URL}}

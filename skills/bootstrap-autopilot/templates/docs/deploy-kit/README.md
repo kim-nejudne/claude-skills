@@ -1,16 +1,18 @@
 # Deploy kit
 
-Rendered by the bootstrap for {{DEPLOY_FEATURE}} and {{DOCKER_FEATURE}}. These are starting points, not live files:
+Rendered by the bootstrap for {{DEPLOY_FEATURE}}{{^VERCEL}} and {{DOCKER_FEATURE}}{{/VERCEL}}. These are starting points, not live files:
 
 | File | Moves to | Feature |
 | --- | --- | --- |
-{{#NODE}}
+{{#DOCKER_NODE}}
 | `Dockerfile.node` | `Dockerfile` | {{DOCKER_FEATURE}} |
-{{/NODE}}
+{{/DOCKER_NODE}}
+{{#DOCKER}}
 {{^NODE}}
 | (write one for the stack: multi-stage, non-root, `HEALTHCHECK` on `{{HEALTH_PATH}}`) | `Dockerfile` | {{DOCKER_FEATURE}} |
 {{/NODE}}
 | `docker-smoke.sh` | `scripts/docker-smoke.sh` | {{DOCKER_FEATURE}} |
+{{/DOCKER}}
 {{#ANDROID}}
 | `apk-release.sh` | `scripts/apk-release.sh` | {{APK_FEATURE}} |
 {{/ANDROID}}
@@ -24,16 +26,27 @@ Rendered by the bootstrap for {{DEPLOY_FEATURE}} and {{DOCKER_FEATURE}}. These a
 {{DEPLOY_FEATURE}} also adds {{APP_TITLE}} to the root `{{ROOT_REL}}README.md` in the same shape as the other apps (their table row and provenance line).
 {{/MONOREPO}}
 
+{{^VERCEL}}
 Keep in `deploy.yml`: the job names `checks` and `droplet`, the step name `build and smoke-test the image`{{#ANDROID}}, the step name `build the release APK`{{/ANDROID}}, the check step names, and the line `ABORT: N live connection(s) after 10 min`. `scripts/autopilot.sh` matches them to tell a code failure (repair session) from an infrastructure one (one re-run) and to force a deploy past live connections.
 
 Already live, do not change: `deploy/nginx/{{APP}}.conf` (installed on the droplet in prep; nginx is root's), `deploy/compose.deploy.yaml` (shipped by the workflow; the smoke test reads its port and `mem_limit`).
+{{/VERCEL}}
+{{#VERCEL}}
+Keep in `deploy.yml`: the job names `checks` and `vercel`, the step name `vercel build`, the check step names, the line `ABORT: missing env:` and the words `never became healthy`. `scripts/autopilot.sh` matches them to tell a code failure (repair session) from an infrastructure one (one re-run) or an env Kim must set.
 
+The app needs `{{HEALTH_PATH}}` (200 once it can serve) and, if it has a database, an additive `db:migrate` script that reads `DATABASE_URL`; the workflow runs it before the new code ships. `{{SMOKE_CMD}} <base-url>` runs against the live URL after the deploy.
+
+GitHub secrets set in prep: `VERCEL_TOKEN` (Kim's token, scoped to `{{VERCEL_SCOPE}}`), `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`. App secrets live only in the Vercel project's production env (`vercel env ls production`); the workflow pulls them on the runner and prints names only.
+{{/VERCEL}}
+
+{{^VERCEL}}
 {{^MONOREPO}}
 GitHub secrets set in prep: `SSH_HOST`, `SSH_USER` (`deploy`), `SSH_KEY` (a key for this repo only), `SSH_KNOWN_HOSTS`. App secrets live only in `/opt/{{APP}}/.env` on the droplet; the container reads them through `env_file`.
 {{/MONOREPO}}
 {{#MONOREPO}}
 GitHub secrets: the monorepo's shared deploy secrets ({{DEPLOY_SECRETS}}, environment `{{DEPLOY_ENVIRONMENT}}`), which the other apps' deploy workflows use too. Never change them. App secrets live only in `/opt/{{APP}}/.env` on the droplet; the container reads them through `env_file`.
 {{/MONOREPO}}
+{{/VERCEL}}
 
 {{#ANDROID}}
 Android release key: GitHub secrets `{{ANDROID_SECRET_PREFIX}}ANDROID_KEYSTORE_B64`, `{{ANDROID_SECRET_PREFIX}}ANDROID_KEYSTORE_PASSWORD` and `{{ANDROID_SECRET_PREFIX}}ANDROID_KEY_ALIAS`, set in prep; Kim holds the only other copy, offline. Phones accept an update only when it is signed with the same key, so a lost key means reinstalling the app (and losing the phone's data) on every phone. The workflow decodes it on the runner for `scripts/apk-release.sh`; it never reaches the image, the repo or a session.

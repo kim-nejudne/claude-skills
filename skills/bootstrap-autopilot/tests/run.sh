@@ -2,9 +2,9 @@
 # Tests for the bootstrap-autopilot templates. No network, no real claude or gh.
 #
 #   tests/run.sh            everything
-#   tests/run.sh <name>...  only these scenarios (render, roadmap, guard, blocked, env, badenv, echo, early)
+#   tests/run.sh <name>...  only these scenarios (render, roadmap, guard, blocked, env, badenv, echo, early, venv)
 #
-# render:   the three fixtures (standalone, monorepo, Android) render, and each autopilot.sh passes
+# render:   the four fixtures (standalone, monorepo, Android, Vercel) render, and each autopilot.sh passes
 #           bash -n and shellcheck.
 # The rest run a rendered standalone app's scripts/autopilot.sh against a local bare origin, with
 # tests/fake/{claude,gh} on PATH and a local web server as the live URL.
@@ -31,7 +31,7 @@ render() { # render FIXTURE DIR
 t_render() {
   echo "render"
   local f d
-  for f in standalone monorepo android; do
+  for f in standalone monorepo android vercel; do
     d=$WORK/render-$f
     if ! render "$f" "$d"; then
       fail "$f renders"
@@ -55,7 +55,7 @@ setup() {
   mkdir -p "$FAKE" "$T/www"
   : >"$FAKE/plan"
   : >"$FAKE/deploys"
-  render standalone "$APPDIR"
+  render "${FIXTURE:-standalone}" "$APPDIR"
   git init -q --bare "$T/origin.git"
   (
     cd "$APPDIR"
@@ -193,7 +193,19 @@ t_early() {
   check "pushed" pushed
 }
 
-ALL=(render roadmap guard blocked env badenv echo early)
+t_venv() {
+  echo "Vercel: missing env vars stop the deploy, the report says to set them on Vercel"
+  FIXTURE=vercel setup venv 1 'F02 Thing'
+  echo 'missing-env' >"$FAKE/deploys"
+  run_autopilot
+  check "exit 1" test "$RC" -eq 1
+  check "no re-run" not in_gh 'run rerun'
+  check "no repair session" not grep -qx repair "$FAKE/sessions.log"
+  check "the report names the vars and Vercel" in_report "**Fix on Vercel:** set ADMIN_HASH MAIL_KEY in the Vercel project's production env"
+  check "sessions are denied the vercel CLI" grep -q "'Bash(vercel:\*)'" "$APPDIR/scripts/autopilot.sh"
+}
+
+ALL=(render roadmap guard blocked env badenv echo early venv)
 for t in "${@:-${ALL[@]}}"; do
   "t_$t"
 done

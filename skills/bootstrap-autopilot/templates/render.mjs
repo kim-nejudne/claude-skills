@@ -46,18 +46,20 @@ const MANIFEST = [
   ['docs/PROGRESS.md', 'docs/PROGRESS.md'],
   ['docs/DECISIONS.md', 'docs/DECISIONS.md'],
   ['docs/deploy-kit/README.md', 'docs/deploy-kit/README.md'],
-  ['docs/deploy-kit/deploy.yml', 'docs/deploy-kit/deploy.yml'],
-  ['docs/deploy-kit/docker-smoke.sh', 'docs/deploy-kit/docker-smoke.sh', null, 0o755],
-  ['docs/deploy-kit/Dockerfile.node', 'docs/deploy-kit/Dockerfile.node', 'NODE'],
+  ['docs/deploy-kit/deploy.yml', 'docs/deploy-kit/deploy.yml', 'DOCKER'],
+  ['docs/deploy-kit/deploy.vercel.yml', 'docs/deploy-kit/deploy.yml', 'VERCEL'],
+  ['docs/deploy-kit/docker-smoke.sh', 'docs/deploy-kit/docker-smoke.sh', 'DOCKER', 0o755],
+  ['docs/deploy-kit/Dockerfile.node', 'docs/deploy-kit/Dockerfile.node', 'DOCKER_NODE'],
   ['docs/deploy-kit/apk-release.sh', 'docs/deploy-kit/apk-release.sh', 'ANDROID', 0o755],
   // A monorepo has one CI workflow at its root: F01 adds this app's jobs to it from the snippet.
   ['docs/deploy-kit/ci-jobs.yml', 'docs/deploy-kit/ci-jobs.yml', 'MONOREPO'],
   ['dockerignore', '.dockerignore', 'MONOREPO'],
   ['github/ci.yml', '.github/workflows/ci.yml', '!MONOREPO'],
-  ['deploy/compose.deploy.yaml', 'deploy/compose.deploy.yaml'],
-  ['deploy/nginx/app.conf', 'deploy/nginx/{{APP}}.conf'],
-  ['deploy/nginx/app-bootstrap.conf', 'deploy/nginx/{{APP}}-bootstrap.conf'],
-  ['deploy/placeholder/index.html', 'deploy/placeholder/index.html'],
+  // The droplet's own files; a Vercel app has none (reference/vercel.md).
+  ['deploy/compose.deploy.yaml', 'deploy/compose.deploy.yaml', 'DOCKER'],
+  ['deploy/nginx/app.conf', 'deploy/nginx/{{APP}}.conf', 'DOCKER'],
+  ['deploy/nginx/app-bootstrap.conf', 'deploy/nginx/{{APP}}-bootstrap.conf', 'DOCKER'],
+  ['deploy/placeholder/index.html', 'deploy/placeholder/index.html', 'DOCKER'],
 ];
 // One file per entry in an array: [template, output pattern, array key, item-key prefix].
 const PER_ITEM = [
@@ -66,12 +68,16 @@ const PER_ITEM = [
 ];
 
 const REQUIRED = [
-  'APP', 'APP_TITLE', 'APP_PITCH', 'OWNER', 'DOMAIN', 'PORT', 'CONTAINER_PORT', 'DROPLET',
+  'APP', 'APP_TITLE', 'APP_PITCH', 'OWNER', 'DOMAIN',
   'GH_REPO', 'REPO_URL', 'STACK', 'INSTALL_CMD', 'LOCKFILE', 'CHECKS', 'FORMAT_CMD', 'FORMATTER',
   'TYPECHECK', 'TEST_ONE_CMD', 'DEV_CMD', 'DEV_PORTS', 'HEALTH_PATH', 'UI', 'WEB', 'DB', 'DRAIN',
-  'NEVER_BREAK', 'INVARIANT_REVIEWERS', 'RULES', 'DOCKER_FEATURE', 'DEPLOY_FEATURE', 'MEM_LIMIT',
-  'NODE_VERSION',
+  'NEVER_BREAK', 'INVARIANT_REVIEWERS', 'RULES', 'DEPLOY_FEATURE', 'NODE_VERSION',
 ];
+// Per DEPLOY_TARGET: the droplet (default) or Vercel (reference/vercel.md).
+const REQUIRED_BY_TARGET = {
+  droplet: ['PORT', 'CONTAINER_PORT', 'DROPLET', 'DOCKER_FEATURE', 'MEM_LIMIT'],
+  vercel: ['VERCEL_SCOPE', 'VERCEL_PROJECT'],
+};
 
 function fail(message) {
   process.stderr.write(`render: ${message}\n`);
@@ -151,6 +157,7 @@ function derive(v) {
   d.DATA_DIR = v.DB ? `/opt/${v.APP}/data` : '';
   Object.assign(d, monorepo(v));
   Object.assign(d, android(v, d));
+  Object.assign(d, target(v, d));
   return d;
 }
 
@@ -184,6 +191,22 @@ function android(v, d) {
     APK_FEATURE: on ? v.APK_FEATURE : '',
     ANDROID_SECRET_PREFIX: on && d.MONOREPO ? `${d.APP_ID.toUpperCase()}_` : '',
     CHECKS_TIMEOUT: on ? 30 : 15,
+  };
+}
+
+// DEPLOY_TARGET: "droplet" (Docker over SSH, the default) or "vercel" (the Vercel CLI from the
+// GitHub workflow). DEPLOY_JOB and BUILD_STEP are the deploy workflow's names the autopilot matches.
+function target(v, d) {
+  const vercel = (v.DEPLOY_TARGET ?? 'droplet') === 'vercel';
+  if (vercel && (d.MONOREPO || d.ANDROID)) fail('DEPLOY_TARGET "vercel" is standalone only, without ANDROID');
+  return {
+    VERCEL: vercel,
+    DOCKER: !vercel,
+    DOCKER_NODE: !vercel && d.NODE,
+    DEPLOY_JOB: vercel ? 'vercel' : 'droplet',
+    BUILD_STEP: vercel ? 'vercel build' : 'build and smoke-test the image',
+    VERCEL_SCOPE: v.VERCEL_SCOPE ?? '',
+    VERCEL_PROJECT: v.VERCEL_PROJECT ?? '',
   };
 }
 
@@ -270,7 +293,9 @@ function main() {
   } catch (e) {
     fail(`cannot read ${jsonPath}: ${e.message}`);
   }
-  const missing = REQUIRED.filter((k) => !(k in facts));
+  const deployTarget = facts.DEPLOY_TARGET ?? 'droplet';
+  if (!(deployTarget in REQUIRED_BY_TARGET)) fail(`DEPLOY_TARGET must be "droplet" or "vercel", not ${JSON.stringify(deployTarget)}`);
+  const missing = [...REQUIRED, ...REQUIRED_BY_TARGET[deployTarget]].filter((k) => !(k in facts));
   if (missing.length) fail(`bootstrap.json is missing: ${missing.join(', ')}`);
   if (!/^[a-z][a-z0-9-]{1,30}$/.test(facts.APP)) fail('APP must be a lowercase slug (a-z, 0-9, -)');
   const vars = { ...facts, ...derive(facts) };

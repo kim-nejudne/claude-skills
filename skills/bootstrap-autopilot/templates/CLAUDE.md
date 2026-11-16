@@ -2,7 +2,7 @@
 
 {{APP_PITCH}}
 
-Stack: {{STACK_SUMMARY}}. Live at {{LIVE_URL}} (Kim's droplet, `127.0.0.1:{{PORT}}`).
+Stack: {{STACK_SUMMARY}}. Live at {{LIVE_URL}} ({{^VERCEL}}Kim's droplet, `127.0.0.1:{{PORT}}`{{/VERCEL}}{{#VERCEL}}Vercel `{{VERCEL_SCOPE}}/{{VERCEL_PROJECT}}`, deployed only by the GitHub workflow{{/VERCEL}}).
 
 Read in this order, through the scripts. Never read ROADMAP.md, PROGRESS.md or spec.md whole:
 
@@ -43,7 +43,7 @@ Deploy target: {{LIVE_URL}} via `{{#MONOREPO}}{{ROOT_REL}}{{/MONOREPO}}.github/w
 ## Never break
 
 {{NEVER_BREAK_MD}}
-- **No real keys in sessions.** Code reads secrets from environment variables. Tests and development use fakes. Real keys exist only in the droplet's `.env` and GitHub secrets. Never read or write `.env*`.
+- **No real keys in sessions.** Code reads secrets from environment variables. Tests and development use fakes. Real keys exist only in {{^VERCEL}}the droplet's `.env`{{/VERCEL}}{{#VERCEL}}the Vercel project's env{{/VERCEL}} and GitHub secrets. Never read or write `.env*`.
 
 ## Working rules
 

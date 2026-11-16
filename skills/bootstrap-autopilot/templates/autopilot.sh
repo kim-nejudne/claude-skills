@@ -59,7 +59,14 @@ APP='{{APP}}'
 APP_TITLE='{{APP_TITLE}}'
 GH_REPO='{{GH_REPO}}'
 REPO_VISIBILITY='{{REPO_VISIBILITY}}'
+{{^VERCEL}}
 DROPLET='{{DROPLET}}'
+{{/VERCEL}}
+{{#VERCEL}}
+# Deployed by the GitHub workflow with the Vercel CLI; sessions never reach Vercel.
+VERCEL_SCOPE='{{VERCEL_SCOPE}}'
+VERCEL_PROJECT='{{VERCEL_PROJECT}}'
+{{/VERCEL}}
 HEALTH_PATH='{{HEALTH_PATH}}'
 WORKFLOW='{{WORKFLOW_FILE}}'
 # Exists once F01 has scaffolded the project; before that there is nothing to check.
@@ -81,7 +88,7 @@ GATE=(
 # Dev servers a session may leave behind (killed only when they run from this repo).
 DEV_PORTS_SS='( {{DEV_PORTS_SS}} )'
 # Deploy steps whose failure is the code's (a repair session), not the infrastructure's.
-CI_STEPS=$'^checks\t({{CI_STEPS_RE}})$|\tbuild and smoke-test the image${{#ANDROID}}|\tbuild the release APK${{/ANDROID}}'
+CI_STEPS=$'^checks\t({{CI_STEPS_RE}})$|\t{{BUILD_STEP}}${{#ANDROID}}|\tbuild the release APK${{/ANDROID}}'
 # Commits a feature session makes (the commit that proves a feature was built).
 FEAT_RE='^feat(\([^)]*\))?: '
 # The option loop shifts them away; the re-execs below need them all.
@@ -149,6 +156,7 @@ if [[ ${PROJECT#"$REPO"/} != "$APP_DIR" ]]; then
   exit 1
 fi
 {{/MONOREPO}}
+{{^VERCEL}}
 # Client engagements never use Kim's droplet, accounts or this runner.
 case $PROJECT/ in
   "$HOME"/Documents/work/*)
@@ -156,6 +164,11 @@ case $PROJECT/ in
     exit 1
     ;;
 esac
+{{/VERCEL}}
+{{#VERCEL}}
+# A Vercel app never touches the droplet. Under ~/Documents/work it is a client POC Kim chose to host
+# on his own GitHub and Vercel (SKILL.md, Fixed policies).
+{{/VERCEL}}
 ROADMAP_JS=(node .claude/scripts/roadmap.mjs)
 
 # Keep the machine awake for the whole run (Kim is away). Re-exec once under systemd-inhibit.
@@ -686,7 +699,7 @@ write_report() {
     echo
     echo "Run \`$(basename "$RUN")\` · $(fmt_dur $(($(date +%s) - RUN_START))) · exit $rc · ≈\$$(printf '%.2f' "$TOTAL_COST")"
     [[ -n $STOP_REASON ]] && echo && echo "**Stopped:** $STOP_REASON"
-    [[ -n $ENV_PROBLEM ]] && echo && echo "**Fix on the droplet:** $ENV_PROBLEM. Then run the deploy workflow again, or start the autopilot."
+    [[ -n $ENV_PROBLEM ]] && echo && echo "**Fix on {{^VERCEL}}the droplet{{/VERCEL}}{{#VERCEL}}Vercel{{/VERCEL}}:** $ENV_PROBLEM. Then run the deploy workflow again, or start the autopilot."
     [[ -n $blocked ]] && echo && echo "**Blocked features** (below) did not ship; everything that doesn't depend on them did."
     echo
     echo "## Roadmap"
@@ -1069,7 +1082,7 @@ gh_repo_ok() {
 gh_secrets_ok() {
   local names s
   names=$(gh secret list --repo "$GH_REPO" --json name --jq '.[].name')
-  for s in SSH_HOST SSH_USER SSH_KEY SSH_KNOWN_HOSTS{{#ANDROID}} {{ANDROID_SECRET_PREFIX}}ANDROID_KEYSTORE_B64 {{ANDROID_SECRET_PREFIX}}ANDROID_KEYSTORE_PASSWORD {{ANDROID_SECRET_PREFIX}}ANDROID_KEY_ALIAS{{/ANDROID}}; do
+  for s in {{^VERCEL}}SSH_HOST SSH_USER SSH_KEY SSH_KNOWN_HOSTS{{/VERCEL}}{{#VERCEL}}VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID{{/VERCEL}}{{#ANDROID}} {{ANDROID_SECRET_PREFIX}}ANDROID_KEYSTORE_B64 {{ANDROID_SECRET_PREFIX}}ANDROID_KEYSTORE_PASSWORD {{ANDROID_SECRET_PREFIX}}ANDROID_KEY_ALIAS{{/ANDROID}}; do
     grep -qx "$s" <<<"$names" || {
       echo "missing secret $s"
       return 1
@@ -1079,6 +1092,22 @@ gh_secrets_ok() {
 # Sessions must not reach the droplet or GitHub with Kim's keys, whatever command they find.
 sandbox_ok() {
   "${SANDBOX[@]}" bash -c 'if compgen -G "$HOME/.ssh/id_*" >/dev/null; then echo "~/.ssh keys visible"; exit 1; fi; echo "~/.ssh is empty inside"'
+{{#VERCEL}}
+  "${SANDBOX[@]}" bash -c 'd=${XDG_DATA_HOME:-$HOME/.local/share}/com.vercel.cli; if [ -n "$(ls -A "$d" 2>/dev/null)" ]; then echo "Vercel CLI login visible"; exit 1; fi; echo "Vercel CLI login hidden inside"'
+  local out
+  out=$("${SANDBOX[@]}" ssh -o BatchMode=yes -o ConnectTimeout=10 -T git@github.com 2>&1) || true
+  if [[ $out == *'successfully authenticated'* ]]; then
+    echo "ssh to GitHub authenticated inside the sandbox"
+    return 1
+  fi
+  echo "ssh to GitHub fails inside"
+}
+# Read-only, and only in a dry run with Kim at the keyboard: real runs never use the Vercel CLI.
+vercel_ok() {
+  vercel project inspect "$VERCEL_PROJECT" --scope "$VERCEL_SCOPE"
+}
+{{/VERCEL}}
+{{^VERCEL}}
   if "${SANDBOX[@]}" ssh -o BatchMode=yes -o ConnectTimeout=10 "root@$DROPLET" true 2>&1; then
     echo "ssh root@$DROPLET worked inside the sandbox"
     return 1
@@ -1097,6 +1126,7 @@ droplet_ok() {
     id deploy >/dev/null && echo 'deploy user present'
   "
 }
+{{/VERCEL}}
 live_ok() {
   local code
   code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "$LIVE_URL/")
@@ -1131,23 +1161,28 @@ dry_run_checks() {
   fi
 {{/MONOREPO}}
   if [[ -n $OFFLINE ]]; then
-    log warn "  - gh, deploy secrets, droplet and live URL skipped (AUTOPILOT_OFFLINE)"
+    log warn "  - gh, deploy secrets, {{^VERCEL}}droplet{{/VERCEL}}{{#VERCEL}}Vercel project{{/VERCEL}} and live URL skipped (AUTOPILOT_OFFLINE)"
   else
     dry_check "gh is logged in" gh auth status
     dry_check "GitHub repo $GH_REPO exists and is $REPO_VISIBILITY" gh_repo_ok
     dry_check "deploy secrets set on $GH_REPO" gh_secrets_ok
+{{^VERCEL}}
     dry_check "droplet $DROPLET reachable, disk and stack dir fine" droplet_ok
+{{/VERCEL}}
+{{#VERCEL}}
+    dry_check "Vercel project $VERCEL_SCOPE/$VERCEL_PROJECT exists (your CLI login)" vercel_ok
+{{/VERCEL}}
     dry_check "$LIVE_URL answers over TLS (placeholder 503 or app 200)" live_ok
   fi
 {{^MONOREPO}}
   if [[ -f .github/workflows/$WORKFLOW ]]; then
     dry_check "$WORKFLOW keeps the job and step names this script matches" \
-      bash -c "grep -q 'name: checks' .github/workflows/$WORKFLOW && grep -q 'name: droplet' .github/workflows/$WORKFLOW && grep -q 'build and smoke-test the image' .github/workflows/$WORKFLOW"
+      bash -c "grep -q 'name: checks' .github/workflows/$WORKFLOW && grep -q 'name: {{DEPLOY_JOB}}' .github/workflows/$WORKFLOW && grep -q '{{BUILD_STEP}}' .github/workflows/$WORKFLOW"
 {{/MONOREPO}}
 {{#MONOREPO}}
   if [[ -f $REPO/.github/workflows/$WORKFLOW ]]; then
     dry_check "$WORKFLOW keeps the job and step names this script matches" \
-      bash -c "cd \"\$1\" && grep -q 'name: checks' \"\$2\" && grep -q 'name: droplet' \"\$2\" && grep -q 'build and smoke-test the image' \"\$2\"" _ "$REPO" ".github/workflows/$WORKFLOW"
+      bash -c "cd \"\$1\" && grep -q 'name: checks' \"\$2\" && grep -q 'name: {{DEPLOY_JOB}}' \"\$2\" && grep -q '{{BUILD_STEP}}' \"\$2\"" _ "$REPO" ".github/workflows/$WORKFLOW"
 {{/MONOREPO}}
   else
     log info "  - $WORKFLOW not written yet ({{DEPLOY_FEATURE}} writes it from docs/deploy-kit/)"
@@ -1174,7 +1209,7 @@ You are running unattended, launched by scripts/autopilot.sh. Kim is away and ca
 - The roadmap mark, the PROGRESS entry, any Kim checks and any DECISIONS rows go into the feature's single commit.
 - If a feature is genuinely blocked after three real fix attempts, mark it with roadmap.mjs as the skill describes, and leave the code uncommitted.
 - Real keys never exist in this session. Code reads env vars; tests and development use fakes. Never read, write or create .env files other than .env.example.
-- Never push, deploy, run gh, ssh, scp, docker against the droplet, or sudo. Never change git remotes or git config. Never edit docs/spec.md or scripts/autopilot.sh. The script does the push and deploy.
+- Never push, deploy, run gh, ssh, scp, {{^VERCEL}}docker against the droplet{{/VERCEL}}{{#VERCEL}}the vercel CLI or any Vercel MCP tool{{/VERCEL}}, or sudo. Never change git remotes or git config. Never edit docs/spec.md or scripts/autopilot.sh. The script does the push and deploy.
 - Never stage .claude/, CLAUDE.md or .env* (they are gitignored; never force-add them).
 - Build exactly one feature, commit it, then stop.
 {{#ANDROID}}
@@ -1194,6 +1229,10 @@ DISALLOWED=(
   'Bash(gh:*)' 'Bash(ssh:*)' 'Bash(scp:*)' 'Bash(rsync:*)' 'Bash(sftp:*)'
   'Bash(docker:*)' 'Bash(rm -rf:*)' 'Bash(sudo:*)'
   'Bash(node .claude/scripts/roadmap.mjs ungate:*)' 'AskUserQuestion'
+{{#VERCEL}}
+  'Bash(vercel:*)' 'Bash(npx vercel:*)' 'Bash(npx --yes vercel:*)' 'Bash(npm exec vercel:*)'
+  'mcp__plugin_vercel_vercel'
+{{/VERCEL}}
 {{#MONOREPO}}
   'Bash(git switch:*)' 'Bash(git worktree:*)' 'Bash(git branch -D:*)' 'Bash(git branch -d:*)'
   'Bash(git stash drop:*)' 'Bash(git stash clear:*)'
@@ -1210,7 +1249,7 @@ DISALLOWED+=('Bash(rtk proxy:*)')
 # config, so no tool or subprocess a session starts can use Kim's SSH key (it has no passphrase)
 # or GitHub login. Network stays open (installs, docs).
 SANDBOX=(bwrap --dev-bind / / --die-with-parent)
-for d in "$HOME/.ssh" "${GH_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gh}"; do
+for d in "$HOME/.ssh" "${GH_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gh}"{{#VERCEL}} "${XDG_DATA_HOME:-$HOME/.local/share}/com.vercel.cli"{{/VERCEL}}; do
   [[ -d $d ]] && SANDBOX+=(--tmpfs "$d")
 done
 SANDBOX+=(--)
@@ -1306,6 +1345,9 @@ run_session() {
     GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.pushurl \
       GIT_CONFIG_VALUE_0=autopilot-sessions-never-push GH_TOKEN=autopilot-sessions-never-use-gh \
       GITHUB_TOKEN=autopilot-sessions-never-use-gh SSH_AUTH_SOCK='' GIT_SSH_COMMAND=false \
+{{#VERCEL}}
+      VERCEL_TOKEN=autopilot-sessions-never-deploy \
+{{/VERCEL}}
       timeout --kill-after=60 "$SESSION_TIMEOUT" "${SANDBOX[@]}" claude -p "$prompt" \
       --output-format stream-json --verbose \
       --dangerously-skip-permissions \
@@ -1723,6 +1765,7 @@ deploy_once() {
     bad_env=$(sed -nE "s/.*${TS_RE}.*(Invalid environment: .*)/\\1/p" "$failed_log" 2>/dev/null | head -1 | cut -c1-240)
     if [[ -n $missing || -n $bad_env ]]; then
       if [[ -n $missing ]]; then
+{{^VERCEL}}
         ENV_PROBLEM="set $missing in /opt/$APP/.env (names in .env.example); the deploy stopped before touching the app"
       else
         ENV_PROBLEM="the app rejected /opt/$APP/.env and the deploy rolled back: $bad_env"
@@ -1730,6 +1773,16 @@ deploy_once() {
       DEPLOY_STATE="not live: $ENV_PROBLEM"
       notify 'Deploy needs the droplet env fixed' "$ENV_PROBLEM"
       deploy_fail "the droplet's env needs Kim: $ENV_PROBLEM"
+{{/VERCEL}}
+{{#VERCEL}}
+        ENV_PROBLEM="set $missing in the Vercel project's production env (vercel env add NAME production; names in .env.example); the deploy stopped before shipping"
+      else
+        ENV_PROBLEM="the app rejected its Vercel production env and the deploy rolled back: $bad_env"
+      fi
+      DEPLOY_STATE="not live: $ENV_PROBLEM"
+      notify 'Deploy needs the Vercel env fixed' "$ENV_PROBLEM"
+      deploy_fail "the Vercel env needs Kim: $ENV_PROBLEM"
+{{/VERCEL}}
       return 1
     elif deploy_said 'ABORT: [0-9]+ live connection' "$failed_log" && ((forced == 0)); then
       forced=1

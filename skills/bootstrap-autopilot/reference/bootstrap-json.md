@@ -26,6 +26,20 @@ Strings are plain unless noted. Every key below is required unless marked option
 | `DOCKER_FEATURE` / `DEPLOY_FEATURE` | `"F02"` / `"F03"` | The Docker and deploy features, right after F01 (`reference/roadmap.md`) |
 | `BOOTSTRAP_DATE` | `"2026-11-02"` | Optional, defaults to today |
 
+## Vercel deploy target
+
+Set when the app deploys to Vercel instead of the droplet (`reference/vercel.md`). Standalone only, without `ANDROID`.
+
+| Key | Example | Notes |
+| --- | --- | --- |
+| `DEPLOY_TARGET` | `"vercel"` | Optional: `"droplet"` (default) or `"vercel"` |
+| `VERCEL_SCOPE` | `"kim-nejudne-projects"` | Required with `vercel`: the team or personal scope (`vercel teams ls`) |
+| `VERCEL_PROJECT` | `"pantry"` | Required with `vercel`: the project name |
+| `DOMAIN` | `"pantry.vercel.app"` | The real production domain |
+| `HEALTH_PATH` | `"/api/healthz"` | A route the framework serves |
+
+With `vercel`, `DROPLET`, `PORT`, `CONTAINER_PORT`, `MEM_LIMIT` and `DOCKER_FEATURE` are not needed, and `deploy/`, `Dockerfile.node` and `docker-smoke.sh` are not rendered. `docs/deploy-kit/deploy.yml` is the Vercel workflow (jobs `checks` and `vercel`), the deploy secrets are `VERCEL_TOKEN`, `VERCEL_ORG_ID` and `VERCEL_PROJECT_ID`, and sessions also lose the Vercel CLI login, the `vercel` command and the Vercel MCP tools. The `~/Documents/work/` refusal is off for this target (SKILL.md, Fixed policies).
+
 ## Monorepo mode
 
 Set when the app is a subdirectory of a bigger repo (phase 0 detects it: `git rev-parse --show-toplevel` is not the app dir). Absent or `false`: standalone, and every template renders exactly as before.

@@ -14,7 +14,7 @@ You run one prep session with Kim at the keyboard. It ends with everything an un
 Skill files (read each when its phase starts, not before):
 
 - `reference/lessons.md`: what Sketchy and Buzzr taught. Read it now, in full.
-- `reference/review-lenses.md` (phase 2), `reference/roadmap.md` (phase 4), `reference/bootstrap-json.md` (phase 5), `reference/droplet.md` (phase 6), `reference/stack-node.md` (phase 7, default stack only), `reference/stack-android.md` (phases 5 and 7, when the spec has an Android app).
+- `reference/review-lenses.md` (phase 2), `reference/roadmap.md` (phase 4), `reference/bootstrap-json.md` (phase 5), `reference/droplet.md` (phase 6; `reference/vercel.md` instead when `DEPLOY_TARGET` is `vercel`), `reference/stack-node.md` (phase 7, default stack only), `reference/stack-android.md` (phases 5 and 7, when the spec has an Android app).
 - `templates/render.mjs` renders `templates/` into the repo from `.claude/bootstrap.json`. `templates/skeletons/` holds formats you fill by hand (spec review, DESIGN.md, ROADMAP.md).
 
 `SKILL_DIR` below is this skill's directory (`~/.claude/skills/bootstrap-autopilot`).
@@ -22,7 +22,7 @@ Skill files (read each when its phase starts, not before):
 ## Fixed policies
 
 - **Repo visibility:** public by default, private with `--private`. Both run the same pipeline.
-- **Personal apps only.** If the repo is under `~/Documents/work/`, stop at once: client engagements never use Kim's droplet, accounts or GitHub (global CLAUDE.md, "Engagements"). Never carry anything from a client engagement into a repo, a template or an example.
+- **Personal apps only.** If the repo is under `~/Documents/work/`, stop at once: client engagements never use Kim's droplet, accounts or GitHub (global CLAUDE.md, "Engagements"). The one exception: Kim explicitly says to host a client POC on his own GitHub and Vercel until the client takes it over. Then use `DEPLOY_TARGET: "vercel"` (`reference/vercel.md`), never the droplet, and record the decision in the spec and DECISIONS. Never carry anything from a client engagement into a repo, a template or an example.
 - **Stack:** the spec decides. If it names none, use the default: Node 24, TypeScript, Vite + React, vitest, eslint + prettier, npm (`reference/stack-node.md`). A native Android app beside it (Kotlin, Compose, sideloaded APK served by the server) is `ANDROID` (`reference/stack-android.md`). Its device-only behaviour (camera, OCR accuracy, install and update, real offline use) is always a Kim check, never a blocker.
 - **Secrets:** build sessions never see real keys. Code reads env vars; tests and development use fakes. Real keys exist only in `/opt/<app>/.env` on the droplet and in GitHub secrets. Never echo, log, commit or read back a key's value.
 - **Local-only agent files:** `.claude/` and `CLAUDE.md` are gitignored from the first commit. Docs, roadmap, `scripts/autopilot.sh`, `deploy/` and workflows are committed.
@@ -75,6 +75,8 @@ Read `reference/roadmap.md`. Copy `roadmap.mjs` and `spec.mjs` into `.claude/scr
 6. Tell Kim: hooks and skills written in this session may not be live until a restart. Phase 7 follows the next-feature skill file directly, so a restart is optional.
 
 ## 6. GATE: droplet provisioning (Kim watching)
+
+With `DEPLOY_TARGET: "vercel"`, follow `reference/vercel.md` instead of the steps below (repo, project, storage, env, deploy secrets, placeholder), then go on to step 9.
 
 Read `reference/droplet.md` and follow it step by step. Before each command, show it in a code block and say what it changes; run it after Kim's go (one go may cover a read-only batch). In order:
 
