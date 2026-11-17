@@ -20,7 +20,8 @@
       "Bash(node .claude/scripts/roadmap.mjs ungate *)"
     ],
     "deny": [
-      "Read(./.env)", "Read(./.env.*)", "Read(~/.ssh/**)",
+      "Read(./.env)", "Read(./.env.local)", "Read(./.env.*.local)", "Read(./.env.development)",
+      "Read(./.env.production)", "Read(./.env.test)", "Read(~/.ssh/**)",
       "Bash(cat .env*)", "Bash(cat ./.env*)"{{#VERCEL}},
       "Read(./.vercel/**)", "mcp__plugin_vercel_vercel"{{/VERCEL}}
     ]
