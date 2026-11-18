@@ -6,7 +6,8 @@
 #             note is in the system prompt (then a placeholder)
 #   workflow  like ok, plus the deploy workflow file
 #   block     mark the feature blocked, commit nothing
-# A prompt that starts "These checks fail" is a repair: remove FAIL_CHECKS and commit a fix.
+# A prompt that starts "These checks fail" is a repair: remove FAIL_CHECKS and commit a fix (a
+# marker file, so a CI repair with nothing failing locally still has something to commit).
 set -euo pipefail
 if [[ ${1:-} == --version ]]; then
   echo '0.0.0 (fake claude)'
@@ -26,6 +27,7 @@ result() { echo '{"type":"result","subtype":"success","is_error":false,"total_co
 if [[ $prompt == 'These checks fail'* ]]; then
   echo "repair" >>"$FAKE/sessions.log"
   rm -f FAIL_CHECKS
+  echo repaired >>REPAIRED
   git add -A && git commit -qm 'fix: make the checks pass'
   result
   exit 0

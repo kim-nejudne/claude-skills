@@ -32,13 +32,23 @@ Set when the app deploys to Vercel instead of the droplet (`reference/vercel.md`
 
 | Key | Example | Notes |
 | --- | --- | --- |
-| `DEPLOY_TARGET` | `"vercel"` | Optional: `"droplet"` (default) or `"vercel"` |
+| `DEPLOY_TARGET` | `"vercel"` | Optional: `"droplet"` (default), `"vercel"`, or `"none"` (below) |
 | `VERCEL_SCOPE` | `"kim-nejudne-projects"` | Required with `vercel`: the team or personal scope (`vercel teams ls`) |
 | `VERCEL_PROJECT` | `"pantry"` | Required with `vercel`: the project name |
 | `DOMAIN` | `"pantry.vercel.app"` | The real production domain |
 | `HEALTH_PATH` | `"/api/healthz"` | A route the framework serves |
 
 With `vercel`, `DROPLET`, `PORT`, `CONTAINER_PORT`, `MEM_LIMIT` and `DOCKER_FEATURE` are not needed, and `deploy/`, `Dockerfile.node` and `docker-smoke.sh` are not rendered. `docs/deploy-kit/deploy.yml` is the Vercel workflow (jobs `checks` and `vercel`), the deploy secrets are `VERCEL_TOKEN`, `VERCEL_ORG_ID` and `VERCEL_PROJECT_ID`, and sessions also lose the Vercel CLI login, the `vercel` command and the Vercel MCP tools. The `~/Documents/work/` refusal is off for this target (SKILL.md, Fixed policies).
+
+## No deploy target
+
+Set `DEPLOY_TARGET: "none"` for a local tool (a CLI, a script collection) that only needs a GitHub repo and CI. The autopilot builds, gates and pushes at the end, then watches `.github/workflows/ci.yml` instead of a deploy workflow. A red run in the `checks` job gets a repair session, anything else gets one re-run, and nothing is deployed. It is standalone only, without `ANDROID` or `WEB`. The stack is usually `reference/stack-bash.md`.
+
+| Not needed | Still needed |
+| --- | --- |
+| `DOMAIN`, `HEALTH_PATH`, `DEPLOY_FEATURE`, `DOCKER_FEATURE`, `PORT`, `CONTAINER_PORT`, `DROPLET`, `MEM_LIMIT`, `MAX_BODY`, `HEAP_MB`, `DEV_CMD`, `DEV_URL`, `DEV_PORTS`, `SMOKE_CMD`, `PLAYTEST_CMD` | everything in "Stack and commands" except the `DEV_*` keys, `SCAFFOLD_FILE` (the tool's entry file), `NODE_VERSION` (any value), and the identity keys |
+
+`docs/deploy-kit/`, `deploy/` and the Docker files are not rendered. `ci.yml` gets a `workflow_dispatch` trigger, and the dry run checks only the queue, the push guard, the sandbox (ssh to GitHub fails inside), gh, the repo and its visibility, and `ci.yml`.
 
 ## Monorepo mode
 

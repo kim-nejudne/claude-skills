@@ -2,7 +2,7 @@
 
 {{APP_PITCH}}
 
-Stack: {{STACK_SUMMARY}}. Live at {{LIVE_URL}} ({{^VERCEL}}Kim's droplet, `127.0.0.1:{{PORT}}`{{/VERCEL}}{{#VERCEL}}Vercel `{{VERCEL_SCOPE}}/{{VERCEL_PROJECT}}`, deployed only by the GitHub workflow{{/VERCEL}}).
+Stack: {{STACK_SUMMARY}}.{{#DEPLOYS}} Live at {{LIVE_URL}} ({{#ON_DROPLET}}Kim's droplet, `127.0.0.1:{{PORT}}`{{/ON_DROPLET}}{{#VERCEL}}Vercel `{{VERCEL_SCOPE}}/{{VERCEL_PROJECT}}`, deployed only by the GitHub workflow{{/VERCEL}}).{{/DEPLOYS}}{{#NO_DEPLOY}} A local tool: nothing is deployed.{{/NO_DEPLOY}}
 
 Read in this order, through the scripts. Never read ROADMAP.md, PROGRESS.md or spec.md whole:
 
@@ -38,12 +38,12 @@ Change roadmap markers with `roadmap.mjs mark <ID> <todo|~|x|!> [note]`. Marking
 Phone app: `android/` is its own Gradle build. Run Gradle from this directory as `android/gradlew -p android <task>`. No emulator or device here and no adb: phone UI is proven with Robolectric Compose tests, and each changed screen gets a Roborazzi screenshot (`android/app/build/outputs/roborazzi/`). Camera, torch, OCR accuracy, APK install and update, real offline use and background sync on a real phone are Kim checks. The release APK ships inside the image ({{APK_FEATURE}}, `scripts/apk-release.sh`); its signing key never exists locally.
 
 {{/ANDROID}}
-Deploy target: {{LIVE_URL}} via `{{#MONOREPO}}{{ROOT_REL}}{{/MONOREPO}}.github/workflows/{{WORKFLOW_FILE}}` (written by {{DEPLOY_FEATURE}}). `scripts/autopilot.sh` pushes and deploys right after {{DEPLOY_FEATURE}} and again at the end; sessions never do.
+{{#DEPLOYS}}Deploy target: {{LIVE_URL}} via `{{#MONOREPO}}{{ROOT_REL}}{{/MONOREPO}}.github/workflows/{{WORKFLOW_FILE}}` (written by {{DEPLOY_FEATURE}}). `scripts/autopilot.sh` pushes and deploys right after {{DEPLOY_FEATURE}} and again at the end; sessions never do.{{/DEPLOYS}}{{#NO_DEPLOY}}No deploy: at the end `scripts/autopilot.sh` pushes to origin and waits for `.github/workflows/ci.yml` to go green; sessions never push.{{/NO_DEPLOY}}
 
 ## Never break
 
 {{NEVER_BREAK_MD}}
-- **No real keys in sessions.** Code reads secrets from environment variables. Tests and development use fakes. Real keys exist only in {{^VERCEL}}the droplet's `.env`{{/VERCEL}}{{#VERCEL}}the Vercel project's env{{/VERCEL}} and GitHub secrets. Never read or write `.env*`.
+- **No real keys in sessions.** Code reads secrets from environment variables. Tests and development use fakes. Real keys exist only in {{#ON_DROPLET}}the droplet's `.env`{{/ON_DROPLET}}{{#VERCEL}}the Vercel project's env{{/VERCEL}}{{#NO_DEPLOY}}Kim's own environment{{/NO_DEPLOY}} and GitHub secrets. Never read or write `.env*`.
 
 ## Working rules
 

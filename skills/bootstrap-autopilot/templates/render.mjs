@@ -45,7 +45,7 @@ const MANIFEST = [
   ['claude/rules/tests.md', '.claude/rules/tests.md'],
   ['docs/PROGRESS.md', 'docs/PROGRESS.md'],
   ['docs/DECISIONS.md', 'docs/DECISIONS.md'],
-  ['docs/deploy-kit/README.md', 'docs/deploy-kit/README.md'],
+  ['docs/deploy-kit/README.md', 'docs/deploy-kit/README.md', 'DEPLOYS'],
   ['docs/deploy-kit/deploy.yml', 'docs/deploy-kit/deploy.yml', 'DOCKER'],
   ['docs/deploy-kit/deploy.vercel.yml', 'docs/deploy-kit/deploy.yml', 'VERCEL'],
   ['docs/deploy-kit/docker-smoke.sh', 'docs/deploy-kit/docker-smoke.sh', 'DOCKER', 0o755],
@@ -68,15 +68,19 @@ const PER_ITEM = [
 ];
 
 const REQUIRED = [
-  'APP', 'APP_TITLE', 'APP_PITCH', 'OWNER', 'DOMAIN',
+  'APP', 'APP_TITLE', 'APP_PITCH', 'OWNER',
   'GH_REPO', 'REPO_URL', 'STACK', 'INSTALL_CMD', 'LOCKFILE', 'CHECKS', 'FORMAT_CMD', 'FORMATTER',
-  'TYPECHECK', 'TEST_ONE_CMD', 'DEV_CMD', 'DEV_PORTS', 'HEALTH_PATH', 'UI', 'WEB', 'DB', 'DRAIN',
-  'NEVER_BREAK', 'INVARIANT_REVIEWERS', 'RULES', 'DEPLOY_FEATURE', 'NODE_VERSION',
+  'TYPECHECK', 'TEST_ONE_CMD', 'UI', 'WEB', 'DB', 'DRAIN',
+  'NEVER_BREAK', 'INVARIANT_REVIEWERS', 'RULES', 'NODE_VERSION',
 ];
-// Per DEPLOY_TARGET: the droplet (default) or Vercel (reference/vercel.md).
+// Every target that deploys has a live URL, a dev server and a deploy feature.
+const DEPLOYED = ['DOMAIN', 'HEALTH_PATH', 'DEPLOY_FEATURE', 'DEV_CMD', 'DEV_PORTS'];
+// Per DEPLOY_TARGET: the droplet (default), Vercel (reference/vercel.md) or none (a local tool:
+// the autopilot pushes and waits for CI, nothing is deployed; reference/bootstrap-json.md).
 const REQUIRED_BY_TARGET = {
-  droplet: ['PORT', 'CONTAINER_PORT', 'DROPLET', 'DOCKER_FEATURE', 'MEM_LIMIT'],
-  vercel: ['VERCEL_SCOPE', 'VERCEL_PROJECT'],
+  droplet: [...DEPLOYED, 'PORT', 'CONTAINER_PORT', 'DROPLET', 'DOCKER_FEATURE', 'MEM_LIMIT'],
+  vercel: [...DEPLOYED, 'VERCEL_SCOPE', 'VERCEL_PROJECT'],
+  none: [],
 };
 
 function fail(message) {
@@ -120,7 +124,7 @@ function derive(v) {
   const cmds = [
     ...checks.map((c) => [c.cmd, c.name]),
     [v.FORMAT_CMD, 'fix formatting'],
-    [v.DEV_CMD, `dev server (${v.DEV_URL})`],
+    ...(v.DEV_CMD ? [[v.DEV_CMD, `dev server (${v.DEV_URL})`]] : []),
   ];
   const width = Math.max(...cmds.map(([c]) => c.length));
   d.COMMANDS_BLOCK = [
@@ -137,8 +141,9 @@ function derive(v) {
   d.PLAYTEST_CMD = v.PLAYTEST_CMD ?? 'npm run playtest --';
   d.TEST_GLOBS = JSON.stringify(v.TEST_GLOBS ?? ['**/*.test.*', '**/*.spec.*', 'tests/**']);
   Object.assign(d, hookLists(v));
-  d.DEV_PORTS_SS = v.DEV_PORTS.map((p) => `sport = :${p}`).join(' or ');
-  d.DEV_PORTS_LIST = v.DEV_PORTS.join(', ');
+  const devPorts = v.DEV_PORTS ?? [];
+  d.DEV_PORTS_SS = devPorts.map((p) => `sport = :${p}`).join(' or ');
+  d.DEV_PORTS_LIST = devPorts.join(', ');
   d.REVIEWER_NAMES = v.INVARIANT_REVIEWERS.map((r) => r.NAME).join(', ');
   const fanout = v.INVARIANT_REVIEWERS.map((r) => `the \`${r.NAME}\` agent when ${r.WHEN}`);
   if (v.UI) fanout.push(`the \`ui-reviewer\` agent when ${v.UI_WHEN ?? 'UI code changed'}`);
@@ -149,8 +154,8 @@ function derive(v) {
   if (v.WEB) skills.push('/playtest');
   d.WORKFLOW_LINE = skills.join(', ') + '.';
   d.NODE = v.STACK === 'node';
-  d.LIVE_URL = `https://${v.DOMAIN}`;
-  d.WORKFLOW_FILE = `deploy-${v.APP}.yml`;
+  d.LIVE_URL = v.DOMAIN ? `https://${v.DOMAIN}` : '';
+  d.WORKFLOW_FILE = (v.DEPLOY_TARGET ?? 'droplet') === 'none' ? 'ci.yml' : `deploy-${v.APP}.yml`;
   d.PUSH_URL_HINT = v.REPO_URL;
   d.STACK_SUMMARY = v.STACK_SUMMARY ?? v.STACK;
   d.HEAP_MB = v.HEAP_MB ?? 128;
@@ -194,17 +199,26 @@ function android(v, d) {
   };
 }
 
-// DEPLOY_TARGET: "droplet" (Docker over SSH, the default) or "vercel" (the Vercel CLI from the
-// GitHub workflow). DEPLOY_JOB and BUILD_STEP are the deploy workflow's names the autopilot matches.
+// DEPLOY_TARGET: "droplet" (Docker over SSH, the default), "vercel" (the Vercel CLI from the
+// GitHub workflow) or "none" (nothing deployed: the autopilot pushes and watches ci.yml).
+// Templates branch on the positive flags ON_DROPLET / VERCEL / NO_DEPLOY, never on ^VERCEL, so a
+// third target can't inherit droplet text. DEPLOY_JOB and BUILD_STEP are the deploy workflow's
+// names the autopilot matches.
 function target(v, d) {
-  const vercel = (v.DEPLOY_TARGET ?? 'droplet') === 'vercel';
+  const t = v.DEPLOY_TARGET ?? 'droplet';
+  const vercel = t === 'vercel';
+  const none = t === 'none';
   if (vercel && (d.MONOREPO || d.ANDROID)) fail('DEPLOY_TARGET "vercel" is standalone only, without ANDROID');
+  if (none && (d.MONOREPO || d.ANDROID || v.WEB)) fail('DEPLOY_TARGET "none" is standalone only, without ANDROID or WEB');
   return {
     VERCEL: vercel,
-    DOCKER: !vercel,
-    DOCKER_NODE: !vercel && d.NODE,
-    DEPLOY_JOB: vercel ? 'vercel' : 'droplet',
-    BUILD_STEP: vercel ? 'vercel build' : 'build and smoke-test the image',
+    ON_DROPLET: t === 'droplet',
+    NO_DEPLOY: none,
+    DEPLOYS: !none,
+    DOCKER: t === 'droplet',
+    DOCKER_NODE: t === 'droplet' && d.NODE,
+    DEPLOY_JOB: vercel ? 'vercel' : none ? 'checks' : 'droplet',
+    BUILD_STEP: vercel ? 'vercel build' : none ? '' : 'build and smoke-test the image',
     VERCEL_SCOPE: v.VERCEL_SCOPE ?? '',
     VERCEL_PROJECT: v.VERCEL_PROJECT ?? '',
   };
@@ -294,7 +308,7 @@ function main() {
     fail(`cannot read ${jsonPath}: ${e.message}`);
   }
   const deployTarget = facts.DEPLOY_TARGET ?? 'droplet';
-  if (!(deployTarget in REQUIRED_BY_TARGET)) fail(`DEPLOY_TARGET must be "droplet" or "vercel", not ${JSON.stringify(deployTarget)}`);
+  if (!(deployTarget in REQUIRED_BY_TARGET)) fail(`DEPLOY_TARGET must be "droplet", "vercel" or "none", not ${JSON.stringify(deployTarget)}`);
   const missing = [...REQUIRED, ...REQUIRED_BY_TARGET[deployTarget]].filter((k) => !(k in facts));
   if (missing.length) fail(`bootstrap.json is missing: ${missing.join(', ')}`);
   if (!/^[a-z][a-z0-9-]{1,30}$/.test(facts.APP)) fail('APP must be a lowercase slug (a-z, 0-9, -)');

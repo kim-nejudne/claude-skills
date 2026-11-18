@@ -2,7 +2,8 @@
 # Fake `gh` for tests/run.sh. Deploy runs live in $FAKE/runs.tsv (id, event, sha, outcome); each
 # new run, and each re-run, takes its outcome from the next line of $FAKE/deploys (default
 # success). Outcomes: success | missing-env | bad-env (the app rejects a value) | echo-fail (a droplet failure whose log only echoes
-# the ABORT lines in the script) | live (a real live-connections ABORT). Every call is logged.
+# the ABORT lines in the script) | live (a real live-connections ABORT) | ci-fail (ci.yml's checks
+# job fails its test step: the code's fault). Every call is logged.
 # The --log-failed lines below hold the workflow's script, $variables and all.
 # shellcheck disable=SC2016
 set -euo pipefail
@@ -64,6 +65,7 @@ case "$1 ${2:-}" in
       printf 'droplet\t%s\t%s \e[36;1m        echo "ABORT: $n live connection(s) after 10 min; nothing changed."\e[0m\n' "$STEP" "$ts"
       printf 'droplet\t%s\t%s \e[36;1m      echo "ABORT: missing env:$missing (set in /opt/pantry/.env); nothing changed."\e[0m\n' "$STEP" "$ts"
       case $o in
+        ci-fail) printf 'checks\ttest\t%s 1 test failed\n' "$ts" ;;
         missing-env) printf 'droplet\t%s\t%s ABORT: missing env: ADMIN_HASH MAIL_KEY (set in /opt/pantry/.env); nothing changed.\n' "$STEP" "$ts" ;;
         bad-env)
           printf 'droplet\t%s\t%s app-1  | Error: Invalid environment: ADMIN_HASH must be scrypt$N$r$p$salt$hash: expected 6 parts\n' "$STEP" "$ts"
@@ -83,6 +85,8 @@ case "$1 ${2:-}" in
       fi
     elif [[ $o == success ]]; then
       echo '{"status":"completed","conclusion":"success","jobs":[]}'
+    elif [[ $o == ci-fail ]]; then
+      jq -n -c '{status: "completed", conclusion: "failure", jobs: [{name: "checks", steps: [{name: "test", status: "completed", conclusion: "failure"}]}]}'
     else
       jq -n -c --arg s "$STEP" '{status: "completed", conclusion: "failure", jobs: [{name: "droplet", steps: [{name: $s, status: "completed", conclusion: "failure"}]}]}'
     fi

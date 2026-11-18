@@ -1,6 +1,6 @@
 ---
 name: bootstrap-autopilot
-description: Turn an app spec (plus optional design mocks) into a repo (a Node server and web client, optionally with a native Android app beside them) (standalone, or an app directory inside a monorepo) that an unattended autopilot can build and deploy to <app>.$BOOTSTRAP_DOMAIN. One interactive prep session: intake, design reference, four-lens spec review, Q&A, roadmap, Claude Code tooling, droplet provisioning, F01, autopilot dry run. Kim launches the autopilot; this skill never does.
+description: Turn an app spec (plus optional design mocks) into a repo (a Node server and web client, optionally with a native Android app beside them, or a local tool such as a Bash CLI with no deploy) (standalone, or an app directory inside a monorepo) that an unattended autopilot can build and deploy to <app>.$BOOTSTRAP_DOMAIN, or for a local tool build, push and see CI go green. One interactive prep session: intake, design reference, four-lens spec review, Q&A, roadmap, Claude Code tooling, droplet provisioning, F01, autopilot dry run. Kim launches the autopilot; this skill never does.
 argument-hint: "[--private] <spec.md> [mock files...]"
 disable-model-invocation: true
 ---
@@ -14,7 +14,7 @@ You run one prep session with Kim at the keyboard. It ends with everything an un
 Skill files (read each when its phase starts, not before):
 
 - `reference/lessons.md`: what Sketchy and Buzzr taught. Read it now, in full.
-- `reference/review-lenses.md` (phase 2), `reference/roadmap.md` (phase 4), `reference/bootstrap-json.md` (phase 5), `reference/droplet.md` (phase 6; `reference/vercel.md` instead when `DEPLOY_TARGET` is `vercel`), `reference/stack-node.md` (phase 7, default stack only), `reference/stack-android.md` (phases 5 and 7, when the spec has an Android app).
+- `reference/review-lenses.md` (phase 2), `reference/roadmap.md` (phase 4), `reference/bootstrap-json.md` (phase 5), `reference/droplet.md` (phase 6; `reference/vercel.md` instead when `DEPLOY_TARGET` is `vercel`; only its step 0 when it is `none`), `reference/stack-node.md` (phase 7, default stack only), `reference/stack-bash.md` (phases 5 and 7, a Bash CLI), `reference/stack-android.md` (phases 5 and 7, when the spec has an Android app).
 - `templates/render.mjs` renders `templates/` into the repo from `.claude/bootstrap.json`. `templates/skeletons/` holds formats you fill by hand (spec review, DESIGN.md, ROADMAP.md).
 
 `SKILL_DIR` below is this skill's directory (`~/.claude/skills/bootstrap-autopilot`).
@@ -24,6 +24,7 @@ Skill files (read each when its phase starts, not before):
 - **Repo visibility:** public by default, private with `--private`. Both run the same pipeline.
 - **Personal apps only.** If the repo is under `~/Documents/work/`, stop at once: client engagements never use Kim's droplet, accounts or GitHub (global CLAUDE.md, "Engagements"). The one exception: Kim explicitly says to host a client POC on his own GitHub and Vercel until the client takes it over. Then use `DEPLOY_TARGET: "vercel"` (`reference/vercel.md`), never the droplet, and record the decision in the spec and DECISIONS. Never carry anything from a client engagement into a repo, a template or an example.
 - **Stack:** the spec decides. If it names none, use the default: Node 24, TypeScript, Vite + React, vitest, eslint + prettier, npm (`reference/stack-node.md`). A native Android app beside it (Kotlin, Compose, sideloaded APK served by the server) is `ANDROID` (`reference/stack-android.md`). Its device-only behaviour (camera, OCR accuracy, install and update, real offline use) is always a Kim check, never a blocker.
+- **No deploy target** (`DEPLOY_TARGET: "none"`): for a local tool (a CLI) that needs only a GitHub repo and CI. There is no droplet, Vercel, Docker, deploy workflow, live URL or deploy secrets. The autopilot pushes at the end and waits for `ci.yml` to go green. Standalone only, without Android or a web client. Choose it when the spec says the tool runs locally. `reference/bootstrap-json.md` lists the keys it needs.
 - **Secrets:** build sessions never see real keys. Code reads env vars; tests and development use fakes. Real keys exist only in `/opt/<app>/.env` on the droplet and in GitHub secrets. Never echo, log, commit or read back a key's value.
 - **Local-only agent files:** `.claude/` and `CLAUDE.md` are gitignored from the first commit. Docs, roadmap, `scripts/autopilot.sh`, `deploy/` and workflows are committed.
 - **Sessions:** one feature per session, one commit per feature, sessions never push. Never weaken tests.
@@ -36,7 +37,7 @@ Skill files (read each when its phase starts, not before):
 2. Read the spec **in full**, and every mock in full (HTML files; for a claude.ai artifact link use the Artifact tool's `read`). Note anything the mocks show that the spec doesn't, and the reverse.
 3. Standalone: `git init -b main` if needed. Monorepo: never `git init` (it would nest a repo). Copy `SKILL_DIR/templates/gitignore` to `.gitignore` (it has no placeholders; in a monorepo it sits beside the root one). Copy the spec to `docs/spec.md` and HTML mocks to `docs/design/` (artifact mocks: save the HTML the read returns). If the spec is already in place under another name (`docs/SPEC.md`), move it to `docs/spec.md` rather than keeping two copies.
 4. First commit: `docs: spec and mocks as received` (`.gitignore`, `docs/`). Check `git status --short -- .` shows no `.claude/`, `CLAUDE.md` or `.env*` first. In a monorepo, commit with explicit paths (`git add -- .gitignore docs` then `git commit -- .gitignore docs`): the rest of the repo may hold Kim's unrelated work.
-5. Tell Kim in 3–5 lines what the app is, the stack the spec implies (or the default), whether it has a UI, a web client, a native Android app, keyed services, a database. No gate yet.
+5. Tell Kim in 3–5 lines what the app is, the stack the spec implies (or the default), the deploy target (droplet, Vercel or none), whether it has a UI, a web client, a native Android app, keyed services, a database. No gate yet.
 
 ## 1. Design reference
 
@@ -60,23 +61,25 @@ Read `reference/review-lenses.md`. Write `docs/spec-review.md` from `templates/s
 
 ## 4. Roadmap
 
-Read `reference/roadmap.md`. Copy `roadmap.mjs` and `spec.mjs` into `.claude/scripts/` (they have no placeholders) so you can check the roadmap as you write it. Write `docs/ROADMAP.md` from `templates/skeletons/ROADMAP.md`: milestones, F01 = scaffold + CI, F02 = Docker image + smoke test, F03 = the deploy workflow (the autopilot deploys right after it), the last feature = the release check (monorepo with a hub: then a gated Hub spoke feature, `reference/roadmap.md`). Every feature has `Spec:` citations that `spec.mjs` resolves, `Depends:`, concrete `Done when:` bullets and `Tests:`. Person-only parts are flagged as `Kim check:` bullets; anything that must not ship without Kim's approval gets a `Gate:` line. Check it as `reference/roadmap.md` says (every citation resolves). Show Kim the milestone list, feature count, Kim checks and gates, then commit `docs: roadmap`.
+Read `reference/roadmap.md`. Copy `roadmap.mjs` and `spec.mjs` into `.claude/scripts/` (they have no placeholders) so you can check the roadmap as you write it. Write `docs/ROADMAP.md` from `templates/skeletons/ROADMAP.md`: milestones, F01 = scaffold + CI, F02 = Docker image + smoke test, F03 = the deploy workflow (the autopilot deploys right after it; with `DEPLOY_TARGET: "none"` there is no F02/F03 of this kind, `reference/roadmap.md`), the last feature = the release check (monorepo with a hub: then a gated Hub spoke feature, `reference/roadmap.md`). Every feature has `Spec:` citations that `spec.mjs` resolves, `Depends:`, concrete `Done when:` bullets and `Tests:`. Person-only parts are flagged as `Kim check:` bullets; anything that must not ship without Kim's approval gets a `Gate:` line. Check it as `reference/roadmap.md` says (every citation resolves). Show Kim the milestone list, feature count, Kim checks and gates, then commit `docs: roadmap`.
 
 ## 5. Tooling
 
-1. Read `reference/bootstrap-json.md` (and, for an Android app, `reference/stack-android.md`'s bootstrap.json values). Write `.claude/bootstrap.json` with the project facts. Port, droplet facts and `MEM_LIMIT` may be provisional until phase 6; re-render then.
+1. Read `reference/bootstrap-json.md` (and, for an Android app, `reference/stack-android.md`'s bootstrap.json values; for a Bash CLI, `reference/stack-bash.md`'s). Write `.claude/bootstrap.json` with the project facts. Port, droplet facts and `MEM_LIMIT` may be provisional until phase 6; re-render then.
 2. Derive from the spec, into bootstrap.json:
    - `NEVER_BREAK`: the spec's invariants, each one testable, written as rules ("Only the owner sees X", "The reducer is pure: …"). Typically 4–8.
    - `INVARIANT_REVIEWERS`: one read-only reviewer per cluster of invariants that a plain spec check would miss (secrecy, money, auth, concurrency…), each with the paths that trigger it and a concrete checklist. One or two is normal; zero is fine for a simple app.
    - `RULES`: path-scoped conventions (`.claude/rules/`) for the main code areas, from the spec and DESIGN.md.
 3. Render: `node SKILL_DIR/templates/render.mjs .claude/bootstrap.json .` Read every rendered file once; fix bootstrap.json and re-render with `--force --only <path>` rather than hand-editing, so a re-render never loses a fix.
 4. Check: `node .claude/scripts/roadmap.mjs next` reports `Next eligible: F01`; `node .claude/scripts/spec.mjs F01` and `spec.mjs <a later ID>` print sections (fix any `<!-- not found -->` citation in the roadmap); pipe a crafted `{"tool_input":{"file_path":"docs/spec.md"}}` into `.claude/hooks/protect-files.mjs` and expect exit 2, likewise for `scripts/autopilot.sh` and `.env`; `bash -n scripts/autopilot.sh`; `shellcheck scripts/autopilot.sh` if installed.
-5. Commit `chore: autopilot, decisions and progress logs, deploy kit` (`scripts/autopilot.sh`, `docs/DECISIONS.md`, `docs/PROGRESS.md`, `docs/deploy-kit/`, `deploy/`, and in a monorepo `.dockerignore`). `.github/workflows/ci.yml` (monorepo: this app's jobs in the root `ci.yml`) goes in with F01. Check `git status --short --ignored -- .` shows `.claude/` and `CLAUDE.md` as ignored, never staged.
+5. Commit `chore: autopilot, decisions and progress logs, deploy kit` (`scripts/autopilot.sh`, `docs/DECISIONS.md`, `docs/PROGRESS.md`, `docs/deploy-kit/`, `deploy/`, and in a monorepo `.dockerignore`). With `none` there is no `docs/deploy-kit/` or `deploy/`: commit `scripts/autopilot.sh`, `docs/DECISIONS.md` and `docs/PROGRESS.md` only. `.github/workflows/ci.yml` (monorepo: this app's jobs in the root `ci.yml`) goes in with F01. Check `git status --short --ignored -- .` shows `.claude/` and `CLAUDE.md` as ignored, never staged.
 6. Tell Kim: hooks and skills written in this session may not be live until a restart. Phase 7 follows the next-feature skill file directly, so a restart is optional.
 
 ## 6. GATE: droplet provisioning (Kim watching)
 
 With `DEPLOY_TARGET: "vercel"`, follow `reference/vercel.md` instead of the steps below (repo, project, storage, env, deploy secrets, placeholder), then go on to step 9.
+
+With `DEPLOY_TARGET: "none"`, do only step 1 (create the GitHub repo, `reference/droplet.md` step 0), then go on to phase 7. There is no DNS, port, vhost, `/opt` dir, database host, deploy key or secret.
 
 Read `reference/droplet.md` and follow it step by step. Before each command, show it in a code block and say what it changes; run it after Kim's go (one go may cover a read-only batch). In order:
 
@@ -104,11 +107,13 @@ Follow `.claude/skills/next-feature/SKILL.md` for F01 yourself, with Kim watchin
 - **At the end:** final gate, push guard, push, watch the deploy workflow, smoke-test the live URL, and write the **morning report** (`~/.cache/<app>-autopilot/morning-report.md`). The deploy run's failures are read from the step's own output, never its echoed script: missing env vars on the droplet (`ABORT: missing env:`) are Kim's to set, an app that never became healthy gets a repair session, live connections get one forced deploy, anything else one re-run.
 - Kim checks never block; gated features wait for Kim, and blocked features (after their extra pass) stay out, without blocking the deploy of the rest.
 
+No deploy target (`none`): no early deploy and no live check. At the end the run gates, runs the push guard, pushes, finds the push's `ci.yml` run and watches it. A failure in the `checks` job gets a repair session (up to two), anything else gets one `gh run rerun --failed`. The morning report's "Push and CI" section has the run URL. `--no-deploy` builds and checks without pushing.
+
 Monorepo mode adds: the run checks that `main` carries no unpushed commits outside `PUSH_ALLOWED` and that the app in Kim's checkout has no uncommitted changes, then works in a git worktree (`~/.cache/<app>-autopilot/worktree`, branch `autopilot/<app>`, from `main`) with `.claude/` and `CLAUDE.md` copied in and dependencies installed there. Kim can keep working and committing anywhere in the repo meanwhile. The push guard also refuses any path outside `PUSH_ALLOWED`; the push goes from the branch to `origin/main`. Once the deploy is live it copies the reviewers' memory back and removes the worktree and branch; a stopped or failed run keeps them, and the next run resumes there.
 
 ## 9. GATE: handoff
 
-1. Run `scripts/autopilot.sh --dry-run`. Every check must pass: queue, push guard, the session sandbox (no `~/.ssh` keys, no ssh to the droplet), gh auth, the repo and its four deploy secrets, droplet reachable with disk and stack dir, the live URL over TLS (Android also: the keystore secrets, Gradle running `android/` with this run's own Gradle home; monorepo also: nothing foreign unpushed on `main`, the app clean in the checkout, rsync). Fix and re-run until green.
+1. Run `scripts/autopilot.sh --dry-run`. Every check must pass: queue, push guard, the session sandbox (no `~/.ssh` keys, no ssh to the droplet), gh auth, the repo and its four deploy secrets, droplet reachable with disk and stack dir, the live URL over TLS (`none`: only the queue, push guard, sandbox with ssh to GitHub failing, gh auth, the repo and its visibility, and `ci.yml`'s `checks` job and `workflow_dispatch`) (Android also: the keystore secrets, Gradle running `android/` with this run's own Gradle home; monorepo also: nothing foreign unpushed on `main`, the app clean in the checkout, rsync). Fix and re-run until green.
 2. Print, for Kim to run himself:
 
    ```
@@ -119,4 +124,4 @@ Monorepo mode adds: the run checks that `main` carries no unpushed commits outsi
    `<repo>` is the app's directory (in a monorepo, `<root>/<app_dir>` in Kim's checkout; the script makes its worktree itself).
 
    Then: where the status and logs are (`~/.cache/<app>-autopilot/`), that Ctrl-C stops cleanly and a re-run resumes from the `[~]` feature, that `--no-deploy` builds without pushing, where the morning report lands, and how many Kim checks and gates exist so far. Monorepo: until the run has pushed, the build lives only on `autopilot/<app>` (look at it in the worktree); don't edit the app in the checkout meanwhile, and after a live deploy run `git pull --rebase`. Ungating a gate later: pull, `roadmap.mjs ungate <ID>` in the checkout, commit it, start the autopilot again.
-3. Save a project memory: the app, its repo, live URL, port, that the autopilot is ready, and the tmux command. Then stop. **Never launch the autopilot.**
+3. Save a project memory: the app, its repo, live URL and port (or "no deploy target"), that the autopilot is ready, and the tmux command. Then stop. **Never launch the autopilot.**

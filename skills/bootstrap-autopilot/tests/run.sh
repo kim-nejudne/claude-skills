@@ -2,10 +2,12 @@
 # Tests for the bootstrap-autopilot templates. No network, no real claude or gh.
 #
 #   tests/run.sh            everything
-#   tests/run.sh <name>...  only these scenarios (render, roadmap, guard, blocked, env, badenv, echo, early, venv)
+#   tests/run.sh <name>...  only these scenarios (render, roadmap, guard, blocked, env, badenv, echo, early, venv,
+#                           none, nonered)
 #
-# render:   the four fixtures (standalone, monorepo, Android, Vercel) render, and each autopilot.sh passes
-#           bash -n and shellcheck.
+# render:   the five fixtures (standalone, monorepo, Android, Vercel, none) render, and each autopilot.sh
+#           passes bash -n and shellcheck. A none render carries no deploy files or deploy words, and
+#           none refuses MONOREPO.
 # The rest run a rendered standalone app's scripts/autopilot.sh against a local bare origin, with
 # tests/fake/{claude,gh} on PATH and a local web server as the live URL.
 set -euo pipefail
@@ -31,7 +33,7 @@ render() { # render FIXTURE DIR
 t_render() {
   echo "render"
   local f d
-  for f in standalone monorepo android vercel; do
+  for f in standalone monorepo android vercel none; do
     d=$WORK/render-$f
     if ! render "$f" "$d"; then
       fail "$f renders"
@@ -42,6 +44,15 @@ t_render() {
       check "$f: shellcheck" shellcheck "$d/scripts/autopilot.sh"
     fi
   done
+  d=$WORK/render-none
+  check "none: no deploy kit, deploy/ or Dockerfile" test ! -e "$d/docs/deploy-kit" -a ! -e "$d/deploy" -a -z "$(find "$d" -name 'Dockerfile*')"
+  check "none: no droplet, health path, live URL or deploy workflow in the rendered files" \
+    not grep -rlE 'droplet|healthz|HEALTH_PATH|LIVE_URL|deploy-pantry' "$d" --exclude=settings.json --exclude=autopilot.sh
+  check "none: the runner never curls a live URL or reaches the droplet" not grep -qE 'live_ok|droplet_ok|DROPLET=' "$d/scripts/autopilot.sh"
+  check "none: ci.yml can be dispatched" grep -q 'workflow_dispatch:' "$d/.github/workflows/ci.yml"
+  check "droplet: ci.yml has no dispatch trigger" not grep -q 'workflow_dispatch' "$WORK/render-standalone/.github/workflows/ci.yml"
+  jq '. + {MONOREPO: true, APP_DIR: "pantry"}' "$HERE/fixtures/none.json" >"$WORK/none-mono.json"
+  check "none refuses MONOREPO" not node "$SKILL/templates/render.mjs" "$WORK/none-mono.json" "$WORK/render-none-mono"
 }
 
 # A standalone app at $APPDIR, F01 done, the given roadmap features to build, committed and clean.
@@ -205,7 +216,34 @@ t_venv() {
   check "sessions are denied the vercel CLI" grep -q "'Bash(vercel:\*)'" "$APPDIR/scripts/autopilot.sh"
 }
 
-ALL=(render roadmap guard blocked env badenv echo early venv)
+t_none() {
+  echo "no deploy target: push, wait for ci.yml to go green, nothing deployed"
+  FIXTURE=none setup none 0 'F02 Thing' 'F03 Other|F02'
+  run_autopilot
+  check "exit 0" test "$RC" -eq 0
+  check "pushed" pushed
+  check "watched ci.yml" in_gh 'run list --workflow ci.yml'
+  check "CI green logged" in_out 'CI green: ci.yml run [0-9]+ passed'
+  check "no early deploy, no dispatch" not in_gh 'workflow run'
+  check "no live check" not in_out 'Live'
+  check "the report says pushed, CI green" in_report 'CI green: https://github.invalid/runs/'
+  check "the report has no deploy section" not in_report '## Deploy'
+}
+
+t_nonered() {
+  echo "no deploy target: a red CI check gets a repair session, then goes green"
+  FIXTURE=none setup nonered 0 'F02 Thing'
+  printf 'ci-fail\nsuccess\n' >"$FAKE/deploys"
+  run_autopilot
+  check "exit 0" test "$RC" -eq 0
+  check "one repair session" test "$(grep -cx repair "$FAKE/sessions.log")" -eq 1
+  check "no re-run" not in_gh 'run rerun'
+  check "two pushed CI runs" test "$(grep -c $'\tpush\t' "$FAKE/runs.tsv")" -eq 2
+  check "CI green logged" in_out 'CI green: ci.yml run'
+  check "pushed" pushed
+}
+
+ALL=(render roadmap guard blocked env badenv echo early venv none nonered)
 for t in "${@:-${ALL[@]}}"; do
   "t_$t"
 done

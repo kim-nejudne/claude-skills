@@ -2,14 +2,27 @@
 # Unattended roadmap runner for {{APP_TITLE}} (rendered by the bootstrap-autopilot skill from the
 # runner proven on two earlier apps). Builds every remaining docs/ROADMAP.md feature with one
 # fresh `claude -p "/next-feature"` session each (a fresh session is the same as /clear), retries
+{{#DEPLOYS}}
 # failures, gives blocked features one more pass, then gates, pushes and deploys to {{DOMAIN}}
 # once nothing is left. It also deploys once mid-run, right after the feature that writes the
 # deploy workflow, so deploy problems show on day one; that early deploy never stops the build.
+{{/DEPLOYS}}
+{{#NO_DEPLOY}}
+# failures, gives blocked features one more pass, then gates and pushes once nothing is left.
+# Nothing is deployed: after the push it waits for ci.yml to go green (a red run in the checks
+# gets a repair session, anything else one re-run).
+{{/NO_DEPLOY}}
 #
 #   scripts/autopilot.sh [--dry-run] [--no-deploy] [--max-attempts N]
 #
+{{#DEPLOYS}}
 # --dry-run builds nothing. It checks the queue, the push guard, gh auth and the repo's deploy
 # secrets, SSH reachability and disk on the droplet, and the live URL, then stops.
+{{/DEPLOYS}}
+{{#NO_DEPLOY}}
+# --dry-run builds nothing. It checks the queue, the push guard, the session sandbox, gh auth,
+# the repo and ci.yml, then stops. --no-deploy builds and checks without pushing.
+{{/NO_DEPLOY}}
 #
 # It runs from a copy of itself (sessions never edit this file, and bash reads a script as it
 # goes). Sessions run with --dangerously-skip-permissions and a hard deny list (push, reset,
@@ -49,7 +62,9 @@ MAX_ATTEMPTS=3
 MAX_SESSIONS=150
 MAX_GIVEUPS_IN_A_ROW=3
 SESSION_TIMEOUT=${AUTOPILOT_SESSION_TIMEOUT:-3h}
+{{#DEPLOYS}}
 LIVE_URL=${AUTOPILOT_LIVE_URL:-'{{LIVE_URL}}'}
+{{/DEPLOYS}}
 WAIT_DIVISOR=${AUTOPILOT_WAIT_DIVISOR:-1}
 OFFLINE=${AUTOPILOT_OFFLINE:-}
 TEST=${AUTOPILOT_TEST:-}
@@ -59,16 +74,20 @@ APP='{{APP}}'
 APP_TITLE='{{APP_TITLE}}'
 GH_REPO='{{GH_REPO}}'
 REPO_VISIBILITY='{{REPO_VISIBILITY}}'
-{{^VERCEL}}
+{{#ON_DROPLET}}
 DROPLET='{{DROPLET}}'
-{{/VERCEL}}
+{{/ON_DROPLET}}
 {{#VERCEL}}
 # Deployed by the GitHub workflow with the Vercel CLI; sessions never reach Vercel.
 VERCEL_SCOPE='{{VERCEL_SCOPE}}'
 VERCEL_PROJECT='{{VERCEL_PROJECT}}'
 {{/VERCEL}}
+{{#DEPLOYS}}
 HEALTH_PATH='{{HEALTH_PATH}}'
+{{/DEPLOYS}}
 WORKFLOW='{{WORKFLOW_FILE}}'
+# What the push starts: a deploy, or (no deploy target) just CI.
+RUN_NOUN='{{#DEPLOYS}}deploy run{{/DEPLOYS}}{{#NO_DEPLOY}}CI run{{/NO_DEPLOY}}'
 # Exists once F01 has scaffolded the project; before that there is nothing to check.
 SCAFFOLD_FILE='{{SCAFFOLD_FILE}}'
 {{#MONOREPO}}
@@ -88,7 +107,7 @@ GATE=(
 # Dev servers a session may leave behind (killed only when they run from this repo).
 DEV_PORTS_SS='( {{DEV_PORTS_SS}} )'
 # Deploy steps whose failure is the code's (a repair session), not the infrastructure's.
-CI_STEPS=$'^checks\t({{CI_STEPS_RE}})$|\t{{BUILD_STEP}}${{#ANDROID}}|\tbuild the release APK${{/ANDROID}}'
+CI_STEPS=$'^checks\t({{CI_STEPS_RE}})${{#DEPLOYS}}|\t{{BUILD_STEP}}${{/DEPLOYS}}{{#ANDROID}}|\tbuild the release APK${{/ANDROID}}'
 # Commits a feature session makes (the commit that proves a feature was built).
 FEAT_RE='^feat(\([^)]*\))?: '
 # The option loop shifts them away; the re-execs below need them all.
@@ -339,7 +358,7 @@ phase_style() {
     'usage limit'* | 'API busy'*) icon=⏳ ascii='~' color=$C_RED spin=SPIN_CLOCK ;;
     'retrying soon'*) icon=🔁 ascii='~' spin=SPIN_CLOCK ;;
     pushing* | 'push retry'*) icon=📤 ascii='^' color=$C_BLUE spin=SPIN_PULSE ;;
-    'waiting for the'* | 'deploy run'*) icon=🚀 ascii='>' color=$C_MAGENTA ;;
+    'waiting for the'* | 'deploy run'* | 'CI run'*) icon=🚀 ascii='>' color=$C_MAGENTA ;;
     'checking the live site'* | 'live check'*) icon=🌐 ascii='@' color=$C_GREEN ;;
     done*) icon=🎉 ascii='*' color=$C_GREEN spin=SPIN_NONE ;;
     *) icon=🔧 ascii='.' color=$C_DIM ;;
@@ -419,7 +438,7 @@ $1 ~ /^[0-9][0-9]:[0-9][0-9]:[0-9][0-9]$/ {
   else if ($2 == "Usage" && $5 == "Waiting") waited[cur] += dur($6)
   else if ($2 == "API" && $3 == "busy") { for (i = 4; i < NF; i++) if ($i == "in") { waited[cur] += dur($(i + 1)); break } }
   else if ($2 == "Roadmap" && $3 == "loop") t0 = t
-  else if ($2 == "Live:" && t0 >= 0) { tl[m++] = t - t0; t0 = -1 }
+  else if (($2 == "Live:" || ($2 == "CI" && $3 == "green:")) && t0 >= 0) { tl[m++] = t - t0; t0 = -1 }
 }
 END { print "M\t" median(s, n, 20); print "T\t" median(tl, m, 10) }'
 
@@ -683,7 +702,9 @@ die() {
 
 # What happened to the push and deploy, for the summary and the morning report.
 DEPLOY_STATE='not reached (the run stopped before the push)'
+{{#DEPLOYS}}
 LIVE_STATE='not checked'
+{{/DEPLOYS}}
 # The mid-run deploy's outcome, and what is wrong with the droplet's .env (the deploy said so).
 EARLY_STATE=''
 ENV_PROBLEM=''
@@ -699,7 +720,7 @@ write_report() {
     echo
     echo "Run \`$(basename "$RUN")\` · $(fmt_dur $(($(date +%s) - RUN_START))) · exit $rc · ≈\$$(printf '%.2f' "$TOTAL_COST")"
     [[ -n $STOP_REASON ]] && echo && echo "**Stopped:** $STOP_REASON"
-    [[ -n $ENV_PROBLEM ]] && echo && echo "**Fix on {{^VERCEL}}the droplet{{/VERCEL}}{{#VERCEL}}Vercel{{/VERCEL}}:** $ENV_PROBLEM. Then run the deploy workflow again, or start the autopilot."
+    [[ -n $ENV_PROBLEM ]] && echo && echo "**Fix on {{#ON_DROPLET}}the droplet{{/ON_DROPLET}}{{#VERCEL}}Vercel{{/VERCEL}}{{#NO_DEPLOY}}your environment{{/NO_DEPLOY}}:** $ENV_PROBLEM. Then run the deploy workflow again, or start the autopilot."
     [[ -n $blocked ]] && echo && echo "**Blocked features** (below) did not ship; everything that doesn't depend on them did."
     echo
     echo "## Roadmap"
@@ -722,11 +743,18 @@ write_report() {
     echo
     git stash list | grep "$APP-autopilot:" | sed 's/^/- /' || echo "- none"
     echo
+{{#DEPLOYS}}
     echo "## Deploy"
     echo
     echo "- $DEPLOY_STATE"
     echo "- Live check: $LIVE_STATE"
     echo "- Live URL: $LIVE_URL"
+{{/DEPLOYS}}
+{{#NO_DEPLOY}}
+    echo "## Push and CI"
+    echo
+    echo "- $DEPLOY_STATE"
+{{/NO_DEPLOY}}
     [[ -n $EARLY_STATE ]] && echo "- Early deploy (mid-run): $EARLY_STATE"
     echo
 {{#MONOREPO}}
@@ -770,8 +798,13 @@ cleanup() {
     echo "stashes made by autopilot:"
     git stash list | grep "$APP-autopilot:" || echo "  none"
     [[ -n $EARLY_STATE ]] && echo "early deploy: $EARLY_STATE"
+{{#DEPLOYS}}
     echo "deploy: $DEPLOY_STATE"
     echo "live: $LIVE_STATE"
+{{/DEPLOYS}}
+{{#NO_DEPLOY}}
+    echo "push and CI: $DEPLOY_STATE"
+{{/NO_DEPLOY}}
     echo "Kim checks queued in docs/PROGRESS.md: $(kim_checks)"
     echo "commits this run:"
     git log --oneline "$RUN_HEAD_AT_START..HEAD" 2>/dev/null || true
@@ -1082,7 +1115,7 @@ gh_repo_ok() {
 gh_secrets_ok() {
   local names s
   names=$(gh secret list --repo "$GH_REPO" --json name --jq '.[].name')
-  for s in {{^VERCEL}}SSH_HOST SSH_USER SSH_KEY SSH_KNOWN_HOSTS{{/VERCEL}}{{#VERCEL}}VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID{{/VERCEL}}{{#ANDROID}} {{ANDROID_SECRET_PREFIX}}ANDROID_KEYSTORE_B64 {{ANDROID_SECRET_PREFIX}}ANDROID_KEYSTORE_PASSWORD {{ANDROID_SECRET_PREFIX}}ANDROID_KEY_ALIAS{{/ANDROID}}; do
+  for s in {{#ON_DROPLET}}SSH_HOST SSH_USER SSH_KEY SSH_KNOWN_HOSTS{{/ON_DROPLET}}{{#VERCEL}}VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID{{/VERCEL}}{{#ANDROID}} {{ANDROID_SECRET_PREFIX}}ANDROID_KEYSTORE_B64 {{ANDROID_SECRET_PREFIX}}ANDROID_KEYSTORE_PASSWORD {{ANDROID_SECRET_PREFIX}}ANDROID_KEY_ALIAS{{/ANDROID}}; do
     grep -qx "$s" <<<"$names" || {
       echo "missing secret $s"
       return 1
@@ -1094,6 +1127,8 @@ sandbox_ok() {
   "${SANDBOX[@]}" bash -c 'if compgen -G "$HOME/.ssh/id_*" >/dev/null; then echo "~/.ssh keys visible"; exit 1; fi; echo "~/.ssh is empty inside"'
 {{#VERCEL}}
   "${SANDBOX[@]}" bash -c 'd=${XDG_DATA_HOME:-$HOME/.local/share}/com.vercel.cli; if [ -n "$(ls -A "$d" 2>/dev/null)" ]; then echo "Vercel CLI login visible"; exit 1; fi; echo "Vercel CLI login hidden inside"'
+{{/VERCEL}}
+{{^ON_DROPLET}}
   local out
   out=$("${SANDBOX[@]}" ssh -o BatchMode=yes -o ConnectTimeout=10 -T git@github.com 2>&1) || true
   if [[ $out == *'successfully authenticated'* ]]; then
@@ -1102,12 +1137,14 @@ sandbox_ok() {
   fi
   echo "ssh to GitHub fails inside"
 }
+{{/ON_DROPLET}}
+{{#VERCEL}}
 # Read-only, and only in a dry run with Kim at the keyboard: real runs never use the Vercel CLI.
 vercel_ok() {
   vercel project inspect "$VERCEL_PROJECT" --scope "$VERCEL_SCOPE"
 }
 {{/VERCEL}}
-{{^VERCEL}}
+{{#ON_DROPLET}}
   if "${SANDBOX[@]}" ssh -o BatchMode=yes -o ConnectTimeout=10 "root@$DROPLET" true 2>&1; then
     echo "ssh root@$DROPLET worked inside the sandbox"
     return 1
@@ -1126,13 +1163,15 @@ droplet_ok() {
     id deploy >/dev/null && echo 'deploy user present'
   "
 }
-{{/VERCEL}}
+{{/ON_DROPLET}}
+{{#DEPLOYS}}
 live_ok() {
   local code
   code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "$LIVE_URL/")
   echo "GET $LIVE_URL/ -> $code (TLS verified)"
   [[ $code == 200 || $code == 503 ]]
 }
+{{/DEPLOYS}}
 queue_report() {
   roadmap_next | grep -E '^(Done|In progress|Blocked|Gated|Open bugs|Resume|Next eligible|Nothing left|Not eligible):' | sed 's/^/    /' |
     while IFS= read -r line; do log info "$line"; done
@@ -1161,19 +1200,29 @@ dry_run_checks() {
   fi
 {{/MONOREPO}}
   if [[ -n $OFFLINE ]]; then
-    log warn "  - gh, deploy secrets, {{^VERCEL}}droplet{{/VERCEL}}{{#VERCEL}}Vercel project{{/VERCEL}} and live URL skipped (AUTOPILOT_OFFLINE)"
+    log warn "  - gh{{#DEPLOYS}}, deploy secrets, {{#ON_DROPLET}}droplet{{/ON_DROPLET}}{{#VERCEL}}Vercel project{{/VERCEL}} and live URL{{/DEPLOYS}}{{#NO_DEPLOY}} and the GitHub repo{{/NO_DEPLOY}} skipped (AUTOPILOT_OFFLINE)"
   else
     dry_check "gh is logged in" gh auth status
     dry_check "GitHub repo $GH_REPO exists and is $REPO_VISIBILITY" gh_repo_ok
+{{#DEPLOYS}}
     dry_check "deploy secrets set on $GH_REPO" gh_secrets_ok
-{{^VERCEL}}
+{{/DEPLOYS}}
+{{#ON_DROPLET}}
     dry_check "droplet $DROPLET reachable, disk and stack dir fine" droplet_ok
-{{/VERCEL}}
+{{/ON_DROPLET}}
 {{#VERCEL}}
     dry_check "Vercel project $VERCEL_SCOPE/$VERCEL_PROJECT exists (your CLI login)" vercel_ok
 {{/VERCEL}}
+{{#DEPLOYS}}
     dry_check "$LIVE_URL answers over TLS (placeholder 503 or app 200)" live_ok
+{{/DEPLOYS}}
   fi
+{{#NO_DEPLOY}}
+  if [[ -f .github/workflows/$WORKFLOW ]]; then
+    dry_check "$WORKFLOW keeps the checks job and its workflow_dispatch trigger" \
+      bash -c "grep -q 'name: checks' .github/workflows/$WORKFLOW && grep -q 'workflow_dispatch' .github/workflows/$WORKFLOW"
+{{/NO_DEPLOY}}
+{{#DEPLOYS}}
 {{^MONOREPO}}
   if [[ -f .github/workflows/$WORKFLOW ]]; then
     dry_check "$WORKFLOW keeps the job and step names this script matches" \
@@ -1184,13 +1233,19 @@ dry_run_checks() {
     dry_check "$WORKFLOW keeps the job and step names this script matches" \
       bash -c "cd \"\$1\" && grep -q 'name: checks' \"\$2\" && grep -q 'name: {{DEPLOY_JOB}}' \"\$2\" && grep -q '{{BUILD_STEP}}' \"\$2\"" _ "$REPO" ".github/workflows/$WORKFLOW"
 {{/MONOREPO}}
+{{/DEPLOYS}}
   else
-    log info "  - $WORKFLOW not written yet ({{DEPLOY_FEATURE}} writes it from docs/deploy-kit/)"
+    log info "  - $WORKFLOW not written yet ({{#DEPLOYS}}{{DEPLOY_FEATURE}} writes it from docs/deploy-kit/{{/DEPLOYS}}{{#NO_DEPLOY}}F01 writes it{{/NO_DEPLOY}})"
   fi
   if ((DRY_FAILS)); then
     die "dry run: $DRY_FAILS check(s) failed"
   fi
+{{#DEPLOYS}}
   log ok "Dry run passed. A real run would build the queue above (deploying once mid-run if a feature adds $WORKFLOW), then run the checks, push and deploy."
+{{/DEPLOYS}}
+{{#NO_DEPLOY}}
+  log ok "Dry run passed. A real run would build the queue above, then run the checks, push and wait for $WORKFLOW to go green."
+{{/NO_DEPLOY}}
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -1209,7 +1264,7 @@ You are running unattended, launched by scripts/autopilot.sh. Kim is away and ca
 - The roadmap mark, the PROGRESS entry, any Kim checks and any DECISIONS rows go into the feature's single commit.
 - If a feature is genuinely blocked after three real fix attempts, mark it with roadmap.mjs as the skill describes, and leave the code uncommitted.
 - Real keys never exist in this session. Code reads env vars; tests and development use fakes. Never read, write or create .env files other than .env.example.
-- Never push, deploy, run gh, ssh, scp, {{^VERCEL}}docker against the droplet{{/VERCEL}}{{#VERCEL}}the vercel CLI or any Vercel MCP tool{{/VERCEL}}, or sudo. Never change git remotes or git config. Never edit docs/spec.md or scripts/autopilot.sh. The script does the push and deploy.
+- Never push, deploy, run gh, ssh, scp, {{#ON_DROPLET}}docker against the droplet, {{/ON_DROPLET}}{{#VERCEL}}the vercel CLI or any Vercel MCP tool, {{/VERCEL}}or sudo. Never change git remotes or git config. Never edit docs/spec.md or scripts/autopilot.sh. The script does the push and deploy.
 - Never stage .claude/, CLAUDE.md or .env* (they are gitignored; never force-add them).
 - Build exactly one feature, commit it, then stop.
 {{#ANDROID}}
@@ -1664,13 +1719,13 @@ watch_run() {
   local id=$1 json status conclusion step started unknown=0
   WATCH_ERR=''
   started=$(date +%s)
-  log info "Watching deploy run $id: $(gh run view "$id" --json url --jq .url 2>>"$RUN_LOG")"
+  log info "Watching $RUN_NOUN $id: $(gh run view "$id" --json url --jq .url 2>>"$RUN_LOG")"
   while :; do
     json=$(gh run view "$id" --json status,conclusion,jobs 2>>"$RUN_LOG") || json='{}'
     status=$(jq -r '.status // "unknown"' <<<"$json" 2>/dev/null) || status=unknown
     conclusion=$(jq -r '.conclusion // ""' <<<"$json" 2>/dev/null) || conclusion=''
     step=$(jq -r '[.jobs[]?.steps[]? | select(.status == "in_progress") | .name] | first // ""' <<<"$json" 2>/dev/null) || step=''
-    PHASE="deploy run $id: $status${step:+ · $step}"
+    PHASE="$RUN_NOUN $id: $status${step:+ · $step}"
     render_status
     if [[ $status == completed ]]; then
       [[ $conclusion == success ]] && return 0
@@ -1680,20 +1735,20 @@ watch_run() {
       # Without step data, the log's own "job<TAB>step<TAB>line" prefixes name them.
       [[ -s $RUN/deploy-$id-failed-steps.txt ]] ||
         cut -f1,2 "$RUN/deploy-$id-failed.log" | grep $'\t' | sort -u >"$RUN/deploy-$id-failed-steps.txt" || true
-      log err "Deploy run $id ended: $conclusion at $(paste -sd, "$RUN/deploy-$id-failed-steps.txt") (log: $RUN/deploy-$id-failed.log)"
+      log err "${RUN_NOUN^} $id ended: $conclusion at $(paste -sd, "$RUN/deploy-$id-failed-steps.txt") (log: $RUN/deploy-$id-failed.log)"
       return 1
     fi
     if [[ $status == unknown ]]; then
       unknown=$((unknown + 1))
       if ((unknown >= 40)); then
-        WATCH_ERR="gh could not read deploy run $id for 10 min; check it by hand"
+        WATCH_ERR="gh could not read $RUN_NOUN $id for 10 min; check it by hand"
         return 2
       fi
     else
       unknown=0
     fi
     if (($(date +%s) - started >= $(secs 5400))); then
-      WATCH_ERR="deploy run $id did not finish in 90 min; check it by hand"
+      WATCH_ERR="$RUN_NOUN $id did not finish in 90 min; check it by hand"
       return 2
     fi
     for _ in $(seq 1 "$(secs 15)"); do
@@ -1717,7 +1772,7 @@ deploy_said() { grep -qE "${TS_RE}$1" "$2" 2>/dev/null; }
 deploy_once() {
   DEPLOY_MODE=$1
   ENV_PROBLEM=''
-  local repairs=0 reruns=0 forced=0 failed_log failed_steps missing bad_env before rc i health
+  local repairs=0 reruns=0 forced=0 failed_log failed_steps missing bad_env before rc{{#DEPLOYS}} i health{{/DEPLOYS}}
   FEATURE='' FEATURE_TITLE='' ATTEMPT=0
   if [[ $DEPLOY_MODE == final ]]; then
     final_gate
@@ -1731,8 +1786,8 @@ deploy_once() {
   fi
 
   if [[ ! -f $REPO/.github/workflows/$WORKFLOW ]]; then
-    DEPLOY_STATE="not pushed: .github/workflows/$WORKFLOW is missing ({{DEPLOY_FEATURE}} writes it; gated or unbuilt?)"
-    deploy_fail ".github/workflows/$WORKFLOW is missing, so a push would not deploy; {{DEPLOY_FEATURE}} should have added it"
+    DEPLOY_STATE="not pushed: .github/workflows/$WORKFLOW is missing ({{#DEPLOYS}}{{DEPLOY_FEATURE}}{{/DEPLOYS}}{{#NO_DEPLOY}}F01{{/NO_DEPLOY}} writes it; gated or unbuilt?)"
+    deploy_fail ".github/workflows/$WORKFLOW is missing, so a push would not {{#DEPLOYS}}deploy{{/DEPLOYS}}{{#NO_DEPLOY}}run CI{{/NO_DEPLOY}}; {{#DEPLOYS}}{{DEPLOY_FEATURE}}{{/DEPLOYS}}{{#NO_DEPLOY}}F01{{/NO_DEPLOY}} should have added it"
     return 1
   fi
   push_main || return 1
@@ -1765,7 +1820,7 @@ deploy_once() {
     bad_env=$(sed -nE "s/.*${TS_RE}.*(Invalid environment: .*)/\\1/p" "$failed_log" 2>/dev/null | head -1 | cut -c1-240)
     if [[ -n $missing || -n $bad_env ]]; then
       if [[ -n $missing ]]; then
-{{^VERCEL}}
+{{#ON_DROPLET}}
         ENV_PROBLEM="set $missing in /opt/$APP/.env (names in .env.example); the deploy stopped before touching the app"
       else
         ENV_PROBLEM="the app rejected /opt/$APP/.env and the deploy rolled back: $bad_env"
@@ -1773,7 +1828,15 @@ deploy_once() {
       DEPLOY_STATE="not live: $ENV_PROBLEM"
       notify 'Deploy needs the droplet env fixed' "$ENV_PROBLEM"
       deploy_fail "the droplet's env needs Kim: $ENV_PROBLEM"
-{{/VERCEL}}
+{{/ON_DROPLET}}
+{{#NO_DEPLOY}}
+        ENV_PROBLEM="set $missing in CI's environment (names in .env.example)"
+      else
+        ENV_PROBLEM="CI rejected its environment: $bad_env"
+      fi
+      DEPLOY_STATE="pushed, CI red: $ENV_PROBLEM"
+      deploy_fail "CI's environment needs Kim: $ENV_PROBLEM"
+{{/NO_DEPLOY}}
 {{#VERCEL}}
         ENV_PROBLEM="set $missing in the Vercel project's production env (vercel env add NAME production; names in .env.example); the deploy stopped before shipping"
       else
@@ -1834,12 +1897,18 @@ $(tail -120 "$failed_log")"
       done
     else
       notify 'Deploy failed' "Run $RUN_ID"
-      DEPLOY_STATE="failed: deploy run $RUN_ID failed again ($(paste -sd, "$RUN/deploy-$RUN_ID-failed-steps.txt" 2>/dev/null)); code is pushed but not live. Log: $RUN/deploy-$RUN_ID-failed.log"
-      deploy_fail "deploy run $RUN_ID failed again; code is pushed but not live"
+      DEPLOY_STATE="failed: $RUN_NOUN $RUN_ID failed again ($(paste -sd, "$RUN/deploy-$RUN_ID-failed-steps.txt" 2>/dev/null)); code is pushed but {{#DEPLOYS}}not live{{/DEPLOYS}}{{#NO_DEPLOY}}CI is red{{/NO_DEPLOY}}. Log: $RUN/deploy-$RUN_ID-failed.log"
+      deploy_fail "$RUN_NOUN $RUN_ID failed again; code is pushed but {{#DEPLOYS}}not live{{/DEPLOYS}}{{#NO_DEPLOY}}CI is red{{/NO_DEPLOY}}"
       return 1
     fi
   done
 
+{{#NO_DEPLOY}}
+  DEPLOY_STATE="pushed $(git rev-parse --short HEAD), CI green: $(gh run view "$RUN_ID" --json url --jq .url 2>/dev/null || echo "run $RUN_ID")"
+  log ok "CI green: $WORKFLOW run $RUN_ID passed on $(git rev-parse --short HEAD)."
+  return 0
+{{/NO_DEPLOY}}
+{{#DEPLOYS}}
   DEPLOY_STATE="deployed $(git rev-parse --short HEAD): $(gh run view "$RUN_ID" --json url --jq .url 2>/dev/null || echo "run $RUN_ID") succeeded"
   PHASE='checking the live site'
   for i in 1 2 3 4 5; do
@@ -1853,12 +1922,20 @@ $(tail -120 "$failed_log")"
   done
   LIVE_STATE="FAILED: $LIVE_URL$HEALTH_PATH or $LIVE_URL/ did not answer 200 after the deploy"
   deploy_fail "the deploy succeeded but $LIVE_URL does not answer"
+{{/DEPLOYS}}
 }
 
 # The early deploy: once, right after the feature that wrote the deploy workflow (it was not in
 # HEAD when the run started), while features remain. Whatever happens, the build goes on.
+{{#DEPLOYS}}
 EARLY_DONE=0
+{{/DEPLOYS}}
 maybe_deploy_early() {
+{{#NO_DEPLOY}}
+  # No deploy target: nothing to deploy early.
+  return 0
+{{/NO_DEPLOY}}
+{{#DEPLOYS}}
   ((DEPLOY && !EARLY_DONE)) || return 0
   [[ -f $REPO/.github/workflows/$WORKFLOW ]] || return 0
   git cat-file -e "$RUN_HEAD_AT_START:.github/workflows/$WORKFLOW" 2>/dev/null && return 0
@@ -1874,6 +1951,7 @@ maybe_deploy_early() {
   LIVE_STATE='not checked'
   DEPLOY_MODE=final
   return 0
+{{/DEPLOYS}}
 }
 
 # A feature commit the push guard refuses (a fake key shaped like a real one, an agent file) is
@@ -2050,7 +2128,12 @@ if ((!DEPLOY)); then
 fi
 
 deploy_once final
+{{#DEPLOYS}}
 notify "$APP_TITLE is live" "$LIVE_URL · $(kim_checks) Kim checks queued in docs/PROGRESS.md"
+{{/DEPLOYS}}
+{{#NO_DEPLOY}}
+notify "$APP_TITLE is pushed, CI green" "$(kim_checks) Kim checks queued in docs/PROGRESS.md"
+{{/NO_DEPLOY}}
 {{#MONOREPO}}
 WORKTREE_REMOVE=1
 {{/MONOREPO}}

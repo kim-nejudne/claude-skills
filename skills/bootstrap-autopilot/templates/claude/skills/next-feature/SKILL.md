@@ -40,7 +40,7 @@ Post a plan of 15 lines or fewer: files to touch, approach, tests to write, and 
 ## 5. Implement
 - For pure logic, write the tests first. Work in small steps and keep the app runnable.
 - Follow `CLAUDE.md` and `.claude/rules/`.
-- External services: code reads keys from environment variables and talks to them through one module each. Tests and development use a fake of that module. Never ask for, read or write a real key; `.env*` is off-limits. A new env var goes into `.env.example` in the same feature; mark it `# optional` on its line if the app starts without it. The deploy refuses to start while a required one is unset {{^VERCEL}}on the droplet{{/VERCEL}}{{#VERCEL}}in the Vercel project's production env{{/VERCEL}}, and Kim sets it there (add a Kim check naming it).
+- External services: code reads keys from environment variables and talks to them through one module each. Tests and development use a fake of that module. Never ask for, read or write a real key; `.env*` is off-limits. A new env var goes into `.env.example` in the same feature; mark it `# optional` on its line if the app starts without it. {{#DEPLOYS}}The deploy refuses to start while a required one is unset {{#ON_DROPLET}}on the droplet{{/ON_DROPLET}}{{#VERCEL}}in the Vercel project's production env{{/VERCEL}}, and Kim sets it there (add a Kim check naming it).{{/DEPLOYS}}{{#NO_DEPLOY}}Kim sets it in his own environment (add a Kim check naming it).{{/NO_DEPLOY}}
 - Stay in scope. Put ideas and nice-to-haves under `## Backlog` in ROADMAP.md, not in the code.
 
 ## 6. Verify
@@ -87,4 +87,4 @@ Do not start the next feature.
 - Disable, skip, or weaken tests or checks
 - Commit with failing checks
 - Build more than one feature
-- Push, deploy, ssh, scp, or run {{^VERCEL}}docker against the droplet{{/VERCEL}}{{#VERCEL}}the vercel CLI or any Vercel MCP tool{{/VERCEL}}
+- Push, deploy, ssh, scp{{#ON_DROPLET}}, or run docker against the droplet{{/ON_DROPLET}}{{#VERCEL}}, or run the vercel CLI or any Vercel MCP tool{{/VERCEL}}

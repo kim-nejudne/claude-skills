@@ -1,11 +1,20 @@
+{{#DEPLOYS}}
 # Checks on every push and pull request. The deploy workflow ({{WORKFLOW_FILE}}, from
 # {{DEPLOY_FEATURE}}) runs the same checks again before it ships.
+{{/DEPLOYS}}
+{{#NO_DEPLOY}}
+# Checks on every push and pull request. Nothing is deployed: the autopilot pushes and waits for
+# this workflow to go green (workflow_dispatch lets it start a run when a push made none).
+{{/NO_DEPLOY}}
 name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
+{{#NO_DEPLOY}}
+  workflow_dispatch:
+{{/NO_DEPLOY}}
 
 permissions:
   contents: read
