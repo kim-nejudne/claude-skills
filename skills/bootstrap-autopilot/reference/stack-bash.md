@@ -4,7 +4,7 @@ Used when the spec names Bash for a local command-line tool. It pairs with `DEPL
 
 ## Machine (phase 7, before F01)
 
-`bats`, `shfmt` and `shellcheck` must be on PATH (Arch: `pacman -S bash-bats shfmt shellcheck`). Check with `command -v bats shfmt shellcheck`. An unattended session can't install them.
+`bats`, `shfmt` and `shellcheck` must be on PATH (Arch: `pacman -S bats shfmt shellcheck`). Check with `command -v bats shfmt shellcheck`. An unattended session can't install them.
 
 ## Layout
 
