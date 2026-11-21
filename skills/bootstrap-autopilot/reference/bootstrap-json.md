@@ -15,8 +15,8 @@ Strings are plain unless noted. Every key below is required unless marked option
 | `GH_REPO` | `"kim-nejudne/pantry"` | The autopilot refuses any other origin |
 | `REPO_VISIBILITY` | `"private"` | Optional: `"public"` (default) or `"private"`, from the `--private` flag. The dry run checks GitHub agrees |
 | `REPO_URL` | `"https://github.com/kim-nejudne/pantry.git"` | What `gh repo create` set as origin |
-| `DOMAIN` | `"pantry.$BOOTSTRAP_DOMAIN"` | |
-| `DROPLET` | `"$BOOTSTRAP_DROPLET_IP"` | |
+| `DOMAIN` | `"pantry.<value of $BOOTSTRAP_DOMAIN>"` | |
+| `DROPLET` | `"<value of $BOOTSTRAP_DROPLET_IP>"` | |
 | `PORT` | `3007` | Host loopback port, picked in phase 6 |
 | `CONTAINER_PORT` | `3000` | |
 | `HEALTH_PATH` | `"/healthz"` | Returns 200 `{ok: true}` |

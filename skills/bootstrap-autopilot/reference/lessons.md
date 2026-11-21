@@ -1,6 +1,6 @@
 # Lessons from Sketchy and Buzzr
 
-Sketchy (74 features, built unattended from 2026-10-30, live at sketchy.$BOOTSTRAP_DOMAIN) and Buzzr before it are where this skill comes from. Each lesson says what happened and what the skill does about it.
+Sketchy (74 features, built unattended from 2026-10-30, live on the droplet) and Buzzr before it are where this skill comes from. Each lesson says what happened and what the skill does about it.
 
 ## Lock design and audience before the roadmap
 

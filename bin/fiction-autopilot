@@ -1,0 +1,347 @@
+#!/usr/bin/env bash
+# fiction-autopilot: split a novel or story-collection EPUB, write its spoiler-safe reading
+# companions and build its companion EPUB, unattended, with a live progress bar.
+#
+#   fiction-autopilot <book.epub | book folder>   run; outside tmux it opens tmux session fiction-<book>
+#   fiction-autopilot attach                      reattach to a running fiction autopilot's tmux session
+#
+# Stages, each one headless `claude -p` session running a skill:
+#   split       /fiction-split      done: companions/.split-done
+#   companions  /fiction-companion  done: companions/.done
+#   epub        /fiction-epub       done: companions/.epub-done
+# A stage the autopilot never ran (no scratch folder of its own) also counts as done when its output
+# exists: a manifest with every unit's text file; a companion .md for every unit plus intro and end;
+# an EPUB newer than every companion source. So books made by hand are picked up where they are.
+# Done stages are skipped, so running it again resumes. Logs: <book>/autopilot-logs/ (autopilot.log
+# timeline; <stage>.<time>.jsonl sessions; .report.md, each session's final report).
+#
+# - Sessions load no user settings (--setting-sources project,local): no RTK hook, no caveman or
+#   ponytail plugins. Model and effort come from SESSION_SETTINGS. Tools: the skill's allowed-tools;
+#   anything else goes to the auto-mode classifier.
+# - Memory: the whole run sits in a systemd scope with MemoryMax=4G, so a runaway is killed, not the desktop.
+# - Keeps the machine awake (systemd-inhibit). notify-send when it finishes or stops.
+# - Usage limits: waits for the 5-hour reset; pauses while 7-day usage is over WEEKLY_CAP.
+# - A session that ends with its stage unfinished is retried, MAX_TRIES in all.
+# - Any permission denial stops the run: the skill needs another allowed tool. A stop writes
+#   autopilot-logs/STOPPED with the reason; delete it to run again.
+# - CLAUDE_BIN swaps in a fake claude; RETRY_WAIT and LIMIT_WAIT (seconds) shorten waits in tests.
+set -uo pipefail
+
+WEEKLY_CAP=0.90
+FIVE_HOUR_FULL=0.97
+SESSION_TIMEOUT=8h
+MAX_TRIES=3
+MEMORY_MAX=4G
+RETRY_WAIT=${RETRY_WAIT:-600} # an API outage usually passes in minutes
+LIMIT_WAIT=${LIMIT_WAIT:-900} # a usage limit with no reset time: 1x, 2x, then hourly
+SESSION_SETTINGS='{"model":"opus","alwaysThinkingEnabled":true,"modelSettings":{"claude-opus-5-5":{"effortLevel":"high"}}}'
+SKILLS=$HOME/.claude/skills
+CLAUDE=${CLAUDE_BIN:-claude} # a fake claude for testing
+declare -A SKILL_OF=([split]=fiction-split [companions]=fiction-companion [epub]=fiction-epub)
+
+die() { echo "fiction-autopilot: $*" >&2; exit 1; }
+
+if [[ ${1:-} == attach ]]; then
+  s=$(tmux list-sessions -F '#S' 2>/dev/null | grep '^fiction-' | head -1)
+  [[ -n $s ]] || die "no fiction autopilot tmux session is running"
+  exec tmux attach -t "=$s"
+fi
+[[ $# == 1 ]] || { sed -n '2,7p' "$0"; exit 2; }
+
+# --- the book: the one EPUB that is not our own output ---
+if [[ -d $1 ]]; then
+  BOOKDIR=$(realpath -s "$1")
+  epubs=()
+  for f in "$BOOKDIR"/*.epub; do [[ -f $f && $f != *-companion.epub ]] && epubs+=("$f"); done
+  ((${#epubs[@]} == 1)) || die "expected exactly one source EPUB in $BOOKDIR, found ${#epubs[@]}"
+  BOOK=${epubs[0]}
+else
+  [[ -f $1 && $1 == *.epub && $1 != *-companion.epub ]] || die "not a source EPUB or folder: $1"
+  BOOK=$(realpath -s "$1")
+  BOOKDIR=$(dirname "$BOOK")
+fi
+NAME=$(basename "$BOOKDIR")
+C=$BOOKDIR/companions
+LOGS=$BOOKDIR/autopilot-logs
+MANIFEST=$C/.units.json
+EPUB=$BOOKDIR/$NAME-companion.epub
+
+# --- wrappers: tmux, then memory scope and sleep inhibitor ---
+if [[ -z ${TMUX:-} ]]; then
+  session=fiction-${NAME//[.:]/-}
+  tmux has-session -t "=$session" 2>/dev/null && exec tmux attach -t "=$session"
+  # bash, not the default shell: zsh's read -p reads a coprocess, and the window would close at once
+  exec tmux new-session -s "$session" bash -c \
+    "$(printf '%q ' "$0" "$BOOK"); echo; read -rp 'Press Enter to close this window.'"
+fi
+if [[ -z ${AUTOPILOT_WRAPPED:-} ]]; then
+  export AUTOPILOT_WRAPPED=1
+  exec systemd-run --user --scope --quiet -p MemoryMax=$MEMORY_MAX \
+    systemd-inhibit --what=idle:sleep:handle-lid-switch --who=fiction-autopilot --why="$NAME" "$0" "$BOOK"
+fi
+
+mkdir -p "$LOGS" "$C"
+exec 9>"$LOGS/.lock"
+flock -n 9 || die "an autopilot is already running for $NAME, or a claude -p session it left behind (pgrep -af 'claude -p')"
+STOPPED=$LOGS/STOPPED
+[[ -f $STOPPED ]] && die "stopped earlier: $(cat "$STOPPED"). Delete $STOPPED to run again."
+for cmd in "$CLAUDE" jq uv java chromium notify-send; do
+  command -v "$cmd" >/dev/null || die "missing command: $cmd"
+done
+for s in "${SKILL_OF[@]}"; do [[ -f $SKILLS/$s/SKILL.md ]] || die "missing skill: $SKILLS/$s/SKILL.md"; done
+# Fetch the Python packages now, not during a network blip at 3 am.
+uv run --quiet --with lxml --with markdown python -I -c 'import lxml, markdown' ||
+  die "uv could not fetch lxml, markdown"
+
+# --- stage state ---
+nunits() { jq '.units | length' "$MANIFEST" 2>/dev/null || echo 0; }
+slugs() { jq -r '.units[].slug' "$MANIFEST"; }
+split_done() {
+  [[ -f $C/.split-done ]] && return 0
+  [[ -f $MANIFEST && ! -d $C/.scratch/split ]] || return 1
+  local s
+  while read -r s; do [[ -f $C/.text/$s.txt ]] || return 1; done < <(slugs)
+}
+companions_done() {
+  [[ -f $C/.done ]] && return 0
+  [[ -f $MANIFEST && -f $C/src/intro.md && -f $C/src/end.md && ! -f $C/.checked ]] || return 1
+  local s
+  while read -r s; do [[ -f $C/src/$s.md ]] || return 1; done < <(slugs)
+}
+companions_count() { # units checked so far, intro and end included
+  if companions_done; then echo $(($(nunits) + 2)); else sort -u "$C/.checked" 2>/dev/null | grep -c .; fi
+}
+epub_done() {
+  [[ -f $C/.epub-done ]] && return 0
+  [[ -f $EPUB && -d $C/src && ! -d $C/.scratch/epub ]] || return 1
+  [[ -z $(find "$C/src" -name '*.md' -newer "$EPUB" -print -quit) ]]
+}
+stage_done() { "${1}_done"; }
+
+# --- progress display ---
+RUN_START=$(date +%s) STAGE='' TRY=0 SESSION_START=0 SESSION_PID='' CUR_LOG='' WAITING='' H5='' D7='' BAR_LINES=0
+dur() { local s=$1; ((s >= 3600)) && printf '%dh%02dm' $((s / 3600)) $((s % 3600 / 60)) || printf '%dm%02ds' $((s / 60)) $((s % 60)); }
+SPIN=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏) TICK=0
+activity() { # what the session did last, and how long ago: proof it isn't stuck
+  [[ -f $CUR_LOG ]] || return
+  local age last
+  age=$(($(date +%s) - $(stat -c %Y "$CUR_LOG")))
+  last=$(tail -n 300 "$CUR_LOG" | jq -rR 'fromjson? | select(.type == "assistant") | . as $e | .message.content[]?
+    | select(.type == "tool_use") | (if $e.parent_tool_use_id then "↳ " else "" end) + .name + " "
+      + (.input.description // (if .input.file_path then (.input.file_path | split("/") | last) else null end)
+         // .input.pattern // .input.command // "" | tostring | gsub("\\s+"; " "))' 2>/dev/null | tail -1)
+  printf 'last activity %s ago · %s' "$(dur "$age")" "${last:0:60}"
+  ((age >= 900)) && printf '\n      quiet for %s: a long think, or stuck; check %s' "$(dur "$age")" "${CUR_LOG##*/}"
+}
+pct() { awk -v u="$1" 'BEGIN { printf "%d%%", u * 100 + 0.5 }'; }
+usage_now() { # latest 5h and 7d utilization from the running session's log
+  [[ -f $CUR_LOG ]] || return
+  local row
+  row=$(tail -n 400 "$CUR_LOG" | jq -rR 'fromjson? | select(.type == "rate_limit_event") | .rate_limit_info.unifiedWindows
+    | [.five_hour.utilization // "", .seven_day.utilization // ""] | @tsv' 2>/dev/null | tail -1)
+  [[ -n $row ]] && IFS=$'\t' read -r H5 D7 <<<"$row"
+}
+render() {
+  local n chk total dg done_split=0 frac_c=0 frac_e=0 p filled bar mark detail now
+  now=$(date +%s)
+  n=$(nunits)
+  split_done && done_split=1
+  chk=$(companions_count) total=$((n + 2))
+  ((n > 0)) && frac_c=$((100 * chk / total))
+  if epub_done; then frac_e=100; elif [[ $STAGE == epub && -f $EPUB && $(stat -c %Y "$EPUB") -ge $SESSION_START ]]; then frac_e=50; fi
+  p=$((5 * done_split + 80 * frac_c / 100 + 15 * frac_e / 100))
+  filled=$((p * 30 / 100))
+  bar=$(printf '%*s' "$filled" '' | sed 's/ /█/g')$(printf '%*s' $((30 - filled)) '' | sed 's/ /░/g')
+  printf '%s  [%s] %3d%%\n' "$NAME" "$bar" "$p"
+  for s in split companions epub; do
+    if stage_done "$s"; then mark='✓'; elif [[ $s == "$STAGE" ]]; then mark='▶'; else mark='·'; fi
+    # shellcheck disable=SC2015 # the || branch is meant to run only when split is not done
+    case $s in
+    split) detail=$( ((done_split)) && echo "$n units" || { [[ $STAGE == split ]] && echo "finding the chapters"; }) ;;
+    companions)
+      detail=''
+      ((n > 0)) && detail="$chk/$total units checked"
+      dg=$(find "$C/.digest" -name '*.md' ! -name '*.cast.md' 2>/dev/null | wc -l)
+      ((n > 0 && dg > 0 && dg < n && chk == 0)) && [[ $s == "$STAGE" ]] && detail="digests $dg/$n · $detail" ;;
+    epub)
+      if ((frac_e == 100)); then detail=${EPUB##*/}
+      elif ((frac_e == 50)); then detail="built, checking and fixing"
+      elif [[ $STAGE == epub ]]; then detail="building"
+      else detail=''; fi ;;
+    esac
+    [[ $s == "$STAGE" && $SESSION_START -gt 0 && -z $WAITING ]] &&
+      detail+="   (session $(dur $((now - SESSION_START))), try $TRY/$MAX_TRIES)"
+    printf '  %s %-11s %s\n' "$mark" "$s" "$detail"
+    [[ $s == "$STAGE" && $SESSION_START -gt 0 && -z $WAITING ]] &&
+      printf '      %s %s\n' "${SPIN[TICK % 10]}" "$(activity)"
+  done
+  local tail
+  tail="elapsed $(dur $((now - RUN_START)))"
+  [[ -n $H5 ]] && tail+=" · 5h usage $(pct "$H5")"
+  [[ -n $D7 ]] && tail+=" · 7d usage $(pct "$D7")"
+  [[ -n $WAITING ]] && tail+=$'\n  ⏸ '"$WAITING ${SPIN[TICK % 10]}"
+  printf '  %s\n' "$tail"
+}
+clear_bar() { ((BAR_LINES > 0)) && printf '\e[%dA\e[J' "$BAR_LINES"; BAR_LINES=0; }
+draw() {
+  local out
+  TICK=$((TICK + 1))
+  out=$(render)
+  clear_bar
+  printf '%s\n' "$out"
+  BAR_LINES=$(($(printf '%s\n' "$out" | wc -l)))
+}
+log() {
+  local line
+  line="$(date '+%a %H:%M')  $*"
+  echo "$line" >>"$LOGS/autopilot.log"
+  clear_bar
+  echo "$line"
+  draw
+}
+notify() { notify-send "Fiction autopilot: $NAME" "$1" 2>/dev/null || true; }
+stop_for() { echo "$1" >"$STOPPED"; log "STOPPED: $1"; notify "Stopped: $1"; exit 1; }
+wait_until() { # $1 epoch, $2 reason
+  WAITING="$2 until $(date -d "@$1" '+%a %d %b %H:%M:%S')"
+  log "$WAITING"
+  while (($(date +%s) < $1)); do draw; sleep 1; done
+  WAITING=''
+}
+events() { jq -rR "fromjson? | $1" "$2" 2>/dev/null; } # stream-json log; stderr lines are skipped
+ge() { awk -v a="$1" -v b="$2" 'BEGIN { exit !(a != "" && a + 0 >= b + 0) }'; }
+
+# --- prompts ---
+overrides() {
+  case $1 in
+  split) cat <<EOF
+- <scratchpad> = $C/.scratch/split
+- Last step, only once companions/.units.json is written and split.py reports no problems: write
+  your final report to $C/.split-done. Never write that file otherwise.
+EOF
+    ;;
+  companions) cat <<EOF
+- SCRATCH = $C/.scratch/companions
+- Resume (replaces step 4's rule): a unit is finished only when its slug (e.g. 03-chapter-3) is a
+  line in $C/.checked. Append that line yourself when the unit's checker has returned. A unit with
+  a .md but no line there was cut off: give it a fresh writer, which overwrites the .md, then a
+  checker. List the units you skipped in the report.
+- Append the line intro to $C/.checked when the intro is written and checked, and the line end
+  when the end essay is.
+- Run at most 8 writer subagents at a time. Launch the next one as one returns.
+- Last step, only once step 7 passes for every unit, the intro and the end essay: write the step-8
+  report to $C/.done. Never write that file otherwise.
+EOF
+    ;;
+  epub) cat <<EOF
+- SCRATCH = $C/.scratch/epub
+- Last step, once step 3's conditions hold or its fifth round is done: write the step-4 report
+  to $C/.epub-done. Never write that file otherwise.
+EOF
+    ;;
+  esac
+}
+prompt_for() {
+  local skill=$SKILLS/${SKILL_OF[$1]}/SKILL.md body
+  body=$(awk 'n >= 2; /^---$/ { n++ }' "$skill") # the body, without frontmatter
+  cat <<EOF
+You are running unattended: nobody will answer questions or approve prompts. Follow the skill
+instructions below in full, with \$ARGUMENTS = $BOOK, except where these overrides say otherwise.
+
+Overrides:
+$(overrides "$1")
+
+EOF
+  # shellcheck disable=SC2016 # the literal text $ARGUMENTS is what gets replaced
+  printf '%s\n' "${body//'$ARGUMENTS'/"$BOOK"}"
+}
+tools_for() { sed -n 's/^allowed-tools: //p' "$SKILLS/${SKILL_OF[$1]}/SKILL.md" | sed 's/, /\n/g'; }
+
+# --- one session ---
+run_session() { # $1 = stage; sets rc, CUR_LOG
+  local tools pid
+  mapfile -t tools < <(tools_for "$1")
+  CUR_LOG=$LOGS/$1.$(date +%m%d-%H%M%S).jsonl
+  SESSION_START=$(date +%s)
+  log "$1: session start (try $TRY/$MAX_TRIES, log ${CUR_LOG##*/})"
+  timeout --kill-after=60 "$SESSION_TIMEOUT" "$CLAUDE" -p "$(prompt_for "$1")" \
+    --setting-sources project,local --settings "$SESSION_SETTINGS" \
+    --permission-mode auto --allowedTools "${tools[@]}" \
+    --output-format stream-json --verbose >"$CUR_LOG" 2>&1 &
+  pid=$!
+  SESSION_PID=$pid
+  while kill -0 "$pid" 2>/dev/null; do
+    usage_now
+    draw
+    sleep 1
+  done
+  wait "$pid"
+  rc=$?
+  SESSION_START=0 SESSION_PID=''
+  events 'select(.type == "result") | .result // empty' "$CUR_LOG" >"${CUR_LOG%.jsonl}.report.md"
+}
+
+# --- main ---
+on_signal() { # a background job ignores Ctrl-C: end the session too, or it runs on unwatched, holding the lock
+  [[ -n $SESSION_PID ]] && kill -TERM "$SESSION_PID" 2>/dev/null && wait "$SESSION_PID" 2>/dev/null
+  log "interrupted${STAGE:+ during $STAGE}"
+  exit 130
+}
+trap on_signal INT TERM HUP
+draw
+log "start: $BOOK"
+for stage in split companions epub; do
+  stage_done "$stage" && continue
+  STAGE=$stage TRY=0 limit_waits=0 WEEKLY_RESET=0
+  until stage_done "$stage"; do
+    if ge "$D7" "$WEEKLY_CAP"; then
+      now=$(date +%s)
+      wait_until $((WEEKLY_RESET > now ? WEEKLY_RESET + 120 : now + 4 * LIMIT_WAIT)) "7-day usage at $(pct "$D7"): paused"
+      D7=''
+      continue
+    fi
+    TRY=$((TRY + 1))
+    run_session "$stage"
+
+    IFS=$'\t' read -r status resets h5 h5_resets d7 d7_resets < <(events 'select(.type == "rate_limit_event")
+      | .rate_limit_info | [.status // "", .resetsAt // 0, .unifiedWindows.five_hour.utilization // "",
+        .unifiedWindows.five_hour.resetsAt // 0, .unifiedWindows.seven_day.utilization // "",
+        .unifiedWindows.seven_day.resetsAt // 0] | @tsv' "$CUR_LOG" | tail -1)
+    [[ -n ${h5:-} ]] && H5=$h5
+    [[ -n ${d7:-} ]] && D7=$d7 WEEKLY_RESET=${d7_resets:-0}
+    IFS=$'\t' read -r mins denials denied < <(events 'select(.type == "result")
+      | [((.duration_ms // 0) / 60000 | floor), (.permission_denials // [] | length),
+         (.permission_denials // [] | map(.tool_name) | unique | join(","))] | @tsv' "$CUR_LOG" | tail -1)
+    log "$stage: session ended rc $rc, ${mins:-?} min, permission denials ${denials:-?}${denied:+ ($denied)}"
+    ((${denials:-0} > 0)) && stop_for "$stage: ${denials} permission denial(s) (${denied}); see ${CUR_LOG##*/}"
+    stage_done "$stage" && break
+
+    reset=''
+    if [[ -n ${status:-} && $status != allowed ]]; then
+      reset=$resets
+    elif ge "${h5:-}" "$FIVE_HOUR_FULL"; then
+      reset=$h5_resets
+    elif grep -qiE 'usage limit|limit reached|hit your limit|rate_limit_error|API Error: 429' "$CUR_LOG"; then
+      reset=0
+    fi
+    if [[ -n $reset ]]; then
+      now=$(date +%s)
+      [[ $reset =~ ^[0-9]+$ ]] || reset=0
+      ((reset > 100000000000)) && reset=$((reset / 1000)) # milliseconds
+      limit_waits=$((limit_waits + 1))
+      TRY=$((TRY - 1)) # a usage limit is not a failed try
+      wait_until $((reset > now ? reset + 120 : now + (limit_waits >= 3 ? 4 * LIMIT_WAIT : limit_waits * LIMIT_WAIT))) "usage limit: waiting"
+      continue
+    fi
+    ((TRY >= MAX_TRIES)) && stop_for "$stage still unfinished after $MAX_TRIES tries; see $LOGS"
+    wait_until $(($(date +%s) + RETRY_WAIT)) "$stage unfinished: retrying"
+  done
+  log "$stage: done"
+done
+STAGE=''
+summary="all stages done in $(dur $(($(date +%s) - RUN_START))): $EPUB"
+log "$summary"
+for s in split companions epub; do
+  r=$(compgen -G "$LOGS/$s.*.report.md" | sort | tail -1)
+  [[ -n $r ]] && echo "  $s report: $r"
+done
+notify "$summary"

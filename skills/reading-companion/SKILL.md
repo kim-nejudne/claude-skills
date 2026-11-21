@@ -166,3 +166,7 @@ Make it concise:
 - Any permission prompts or Bash calls outside the allowed list, yours or the subagents'.
 
 The sources in `companions/src/` can be edited and rebuilt with the build command above.
+
+## Optional: EPUB for phone reading
+Only when Kim asks: `/companion-epub BOOKDIR` builds one EPUB with each companion before its
+chapter text.
